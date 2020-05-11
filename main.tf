@@ -24,6 +24,7 @@ resource "aws_lambda_function" "this" {
   source_code_hash = filebase64sha256(data.archive_file.this.output_path)
   environment {
     variables = {
+      STATE_NAMES      = jsonencode(var.state_names)
       METRIC_NAMESPACE = local.metric_namespace
       METRIC_DIMENSION = local.metric_dimension
     }
@@ -44,6 +45,11 @@ resource "aws_iam_role_policy" "logs_to_lambda" {
 
 resource "aws_iam_role_policy" "cloudwatch_to_lambda" {
   policy = data.aws_iam_policy_document.cloudwatch_for_lambda.json
+  role   = aws_iam_role.this.id
+}
+
+resource "aws_iam_role_policy" "ssm_to_lambda" {
+  policy = data.aws_iam_policy_document.ssm_for_lambda.json
   role   = aws_iam_role.this.id
 }
 

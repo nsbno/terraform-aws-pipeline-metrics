@@ -14,6 +14,8 @@ import logging
 import json
 import urllib
 import boto3
+import botocore
+import re
 from datetime import datetime
 from urllib import request
 
@@ -59,6 +61,44 @@ def has_entered_state(state, events):
     )
 
 
+def has_successfully_exited_state(state, events):
+    """Check if a given state has successfully exited at some point during an execution"""
+    exit_event = next(
+        (
+            e
+            for e in events
+            if e["type"].endswith("StateExited")
+            and e["stateExitedEventDetails"]["name"] == state
+        ),
+        None,
+    )
+    if exit_event:
+        prev_event = find_event_by_backtracking(
+            exit_event,
+            events,
+            lambda e: e["id"] == exit_event["previousEventId"]
+            and e["type"].endswith("Succeeded"),
+        )
+        if prev_event:
+            return True
+    return False
+
+
+def has_exited_state(state, events):
+    """Check if a given state has been exited at some point during an execution"""
+    return bool(
+        next(
+            (
+                e
+                for e in events
+                if e["type"].endswith("StateExited")
+                and e["stateExitedEventDetails"]["name"] == state
+            ),
+            None,
+        )
+    )
+
+
 def error_cause_contains(text, events):
     """Checks if a given string exists in the error cause of an execution"""
     fail_event = next(
@@ -88,7 +128,7 @@ def get_detailed_execution(execution, limit=500, client=None):
                 reverseOrder=True,
             )
             break
-        except:
+        except botocore.exceptions.ClientError:
             if retries == 2:
                 logger.exception()
                 raise
@@ -131,6 +171,15 @@ def lambda_handler(event, context):
     logger.info("Lambda triggered with event '%s'", event)
 
     region = os.environ["AWS_REGION"]
+    state_names = json.loads(os.environ["STATE_NAMES"])
+    logger.info("Collecting metrics for states '%s'", state_names)
+    formatted_state_names = [
+        re.sub(r"[^a-zA-Z0-9_-]", "_", s) for s in state_names
+    ]
+    logger.info(
+        "State names with special characters replaced '%s'",
+        formatted_state_names,
+    )
     metric_namespace = os.environ["METRIC_NAMESPACE"]
     metric_dimension = os.environ["METRIC_DIMENSION"]
     status = event["detail"]["status"]
@@ -139,6 +188,10 @@ def lambda_handler(event, context):
     timestamp = event["time"]
     state_machine_name = state_machine_arn.split(":")[6]
     execution_name = execution_arn.split(":")[7]
+
+    assert len(set(formatted_state_names)) == len(
+        state_names
+    ), "Distinct state names map to the same name when replacing special characters with underscore"
 
     client = boto3.client("stepfunctions")
     response = client.get_execution_history(
@@ -149,6 +202,159 @@ def lambda_handler(event, context):
     attempted_deploy_prod = has_entered_state("Deploy Prod", events)
 
     metrics = []
+
+    """
+    Collect metric on individidual states and update SSM if necessary
+    """
+    for i, s in enumerate(state_names):
+        if not has_entered_state(s, events):
+            logger.info(
+                "Execution did not enter state '%s', so not collecting metrics for that state",
+                s,
+            )
+            continue
+        # TODO Report timestamp of the event in question
+        dimensions = [
+            {"Name": "PipelineName", "Value": state_machine_name},
+            {"Name": "StateName", "Value": s},
+        ]
+        metric_name = "StateSuccess"
+        successfully_exited_state = has_successfully_exited_state(s, events)
+        if successfully_exited_state:
+            logger.info("State '%s' was entered and successfully exited", s)
+        else:
+            logger.info(
+                "State '%s' was entered, but did not successfully exit", s
+            )
+            metric_name = "StateFail"
+            dimensions.append(
+                {
+                    "Name": "FailType",
+                    "Value": "TERRAFORM_LOCK"
+                    if error_cause_contains(
+                        "Terraform acquires a state lock", events
+                    )
+                    else "DEFAULT",
+                }
+            )
+        metrics.append(
+            {
+                "MetricName": metric_name,
+                "Dimensions": dimensions,
+                "Timestamp": timestamp,
+                "Value": 1,
+                "Unit": "Count",
+            }
+        )
+
+        ssm_client = boto3.client("ssm")
+        try:
+            p = ssm_client.get_parameter(
+                Name=f"/{state_machine_name}/{formatted_state_names[i]}"
+            )
+        except ssm_client.exceptions.ParameterNotFound:
+            continue
+        v = json.loads(p["Parameter"]["Value"])
+        if successfully_exited_state and not v["fixed"]:
+            ssm_client.put_parameter(
+                Name=f"/{state_machine_name}/{formatted_state_names[i]}",
+                Overwrite=True,
+                Type="String",
+                Value=json.dumps(
+                    {
+                        **v,
+                        "fixed": True,
+                        "fixed_execution": execution_arn,
+                        "fixed_at": timestamp,
+                    },
+                ),
+            )
+            metrics.append(
+                {
+                    "MetricName": "MeanTimeToRecovery",
+                    "Dimensions": [
+                        {"Name": "PipelineName", "Value": state_machine_name},
+                        {"Name": "StateName", "Value": s},
+                    ],
+                    "Timestamp": timestamp,
+                    "Value": event["detail"]["stopDate"] - v["failed_at"],
+                    "Unit": "Milliseconds",
+                }
+            )
+
+    if status == "SUCCEEDED":
+        """
+        Update lead time metric if execution was successful
+        """
+        start_time = event["detail"]["startDate"]
+        end_time = event["detail"]["stopDate"]
+        # TODO: Verify that required states have been entered (e.g., Deploy Prod, Smoke Tests)?
+        if start_time and end_time:
+            duration = end_time - start_time
+            metrics.append(
+                {
+                    "MetricName": "LeadTime",
+                    "Dimensions": [
+                        {"Name": "PipelineName", "Value": state_machine_name},
+                    ],
+                    "Timestamp": timestamp,
+                    "Value": duration,
+                    "Unit": "Milliseconds",
+                }
+            )
+    elif status == "FAILED":
+        """
+        Execution failed. Check if this is the first failure, and update SSM if necessary
+        """
+        failed_event = find_event_by_backtracking(
+            last_event, events, lambda e: e["type"].endswith("StateEntered")
+        )
+        ssm_client = boto3.client("ssm")
+        s = failed_event["stateEnteredEventDetails"]["name"]
+        if s in state_names:
+            formatted_state_name = formatted_state_names[state_names.index(s)]
+            new_failure = True
+            try:
+                p = ssm_client.get_parameter(
+                    Name=f"/{state_machine_name}/{formatted_state_name}"
+                )
+                new_failure = json.loads(p["Parameter"]["Value"])["fixed"]
+            except ssm_client.exceptions.ParameterNotFound:
+                logger.warn(
+                    "SSM parameter '%s' does not exist",
+                    f"/{state_machine_name}/{formatted_state_name}",
+                )
+
+            if new_failure:
+                ssm_client.put_parameter(
+                    Name=f"/{state_machine_name}/{formatted_state_name}",
+                    Overwrite=True,
+                    Type="String",
+                    Value=json.dumps(
+                        {
+                            "failed_execution": execution_arn,
+                            "failed_at": event["detail"]["stopDate"],
+                            "fixed": False,
+                            "fixed_execution": None,
+                            "fixed_at": None,
+                        },
+                    ),
+                )
+            # d = p["Parameter"]["LastModifiedDate"]
+    else:
+        logger.error("Unexpected execution status '%s'", status)
+
+    if len(metrics):
+        logger.info("Sending metrics to CloudWatch '%s'", metrics)
+        cloudwatch_client = boto3.client("cloudwatch")
+        response = cloudwatch_client.put_metric_data(
+            Namespace=metric_namespace, MetricData=metrics,
+        )
+        logger.info("Response from putting metric '%s'", response)
+    else:
+        logger.info("No metrics to send to CloudWatch")
+
+    return
 
     if status == "SUCCEEDED" and attempted_deploy_prod:
         logger.info(

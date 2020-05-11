@@ -8,6 +8,12 @@ variable "state_machine_arns" {
   type        = list(string)
 }
 
+variable "state_names" {
+  description = "Names of states to collect metrics on"
+  default     = ["Deploy Test", "Deploy Stage", "Deploy Prod"]
+  type        = list(string)
+}
+
 variable "tags" {
   description = "A map of tags (key-value pairs) passed to resources."
   type        = map(string)

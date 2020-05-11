@@ -27,6 +27,14 @@ data "aws_iam_policy_document" "step_functions_for_lambda" {
   }
 }
 
+data "aws_iam_policy_document" "ssm_for_lambda" {
+  statement {
+    effect    = "Allow"
+    actions   = ["ssm:*"]
+    resources = formatlist("arn:aws:ssm:${local.current_region}:${local.current_account_id}:parameter/%s/*", local.state_machine_names)
+  }
+}
+
 data "aws_iam_policy_document" "logs_for_lambda" {
   statement {
     effect    = "Allow"
