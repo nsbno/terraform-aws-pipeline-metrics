@@ -97,8 +97,8 @@ resource "aws_cloudwatch_dashboard" "this" {
         type   = "text"
         x      = 0
         y      = 0
-        width  = 18
-        height = 3
+        width  = 24
+        height = 2
         properties = {
           markdown = "\nChange Failure Rate (CFR) | Deployment Frequency (DF) | Lead Time (LT) | Mean Time to Recovery (MTTR)\n----|-----|----|-----\nPercentage of failed states | Frequency of  successful states | Pipeline execution time for executions that successfully deploy to production | Time it takes to go from a failed to a successful state \n"
         }
@@ -107,7 +107,7 @@ resource "aws_cloudwatch_dashboard" "this" {
           type   = "metric"
           x      = 0
           y      = 0
-          width  = 18
+          width  = 24
           height = 3
           properties = {
             metrics = [
@@ -117,34 +117,124 @@ resource "aws_cloudwatch_dashboard" "this" {
             view   = "singleValue"
             region = local.current_region
             stat   = "Average"
-            period = 259200
+            period = 86400
             title  = "Overall Pipeline Metrics"
           }
         }
       ],
-      [for state in var.state_names : {
-        type   = "metric"
-        x      = 0
-        y      = 0
-        width  = 18
-        height = 3
-        properties = {
-          metrics = [
-            [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m3", label = "(#) Deployment frequency", stat = "Sum" }],
-            [{ expression = "100*(m4/(m3+m4))", id = "e1", label = "(%) Change failure rate" }],
-            [{ expression = "FLOOR(m1/(60*1000))", label = "(minutes) Mean time to recovery", id = "e3" }],
-            [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "DEFAULT", { label = "Other failures", id = "m4", stat = "Sum", visible = false }],
-            [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "TERRAFORM_LOCK", { label = "Terraform lock failures", id = "m5", stat = "Sum", visible = false }],
-            [local.metric_namespace, "MeanTimeToRecovery", "PipelineName", each.key, "StateName", state, { id = "m1", label = "MeanTimeToRecovery", visible = false }]
-          ]
-          view   = "singleValue"
-          region = local.current_region
-          stat   = "Average"
-          period = 259200
-          title  = state
+      flatten([for state in var.state_names : [
+        {
+          type   = "text"
+          x      = 0
+          y      = 0
+          width  = 24
+          height = 2
+          properties = {
+            markdown = "&nbsp;\n# **${state}**"
+          }
+        },
+        {
+          type   = "metric"
+          x      = 0
+          y      = 0
+          width  = 12
+          height = 3
+          properties = {
+            metrics = [
+              [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m3", label = "(#) Deployment frequency", stat = "Sum" }],
+              [{ expression = "100*(m4/(m3+m4))", id = "e1", label = "(%) Change failure rate" }],
+              [{ expression = "FLOOR(m1/(60*1000))", label = "(minutes) Mean time to recovery", id = "e3" }],
+              [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "DEFAULT", { label = "Other failures", id = "m4", stat = "Sum", visible = false }],
+              [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "TERRAFORM_LOCK", { label = "Terraform lock failures", id = "m5", stat = "Sum", visible = false }],
+              [local.metric_namespace, "MeanTimeToRecovery", "PipelineName", each.key, "StateName", state, { id = "m1", label = "MeanTimeToRecovery", visible = false }]
+            ]
+            view   = "singleValue"
+            region = local.current_region
+            stat   = "Average"
+            period = 43200
+            title  = "Key Numbers"
+          }
+        },
+        {
+          type   = "metric"
+          x      = 12
+          y      = 0
+          width  = 12
+          height = 6
+          properties = {
+            metrics = [
+              [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m3", label = "Success" }]
+            ]
+            view     = "timeSeries"
+            stacked  = false
+            region   = local.current_region
+            liveData = true
+            stat     = "Sum"
+            period   = 43200
+            title    = "Deployment Frequency"
+            yAxis = {
+              left = {
+                showUnits = false
+                label     = "Frequency"
+              }
+            }
+          }
+        },
+        {
+          type   = "metric"
+          x      = 0
+          y      = 0
+          width  = 6
+          height = 3
+          properties = {
+            metrics = [
+              [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m3", label = "(#) Deployment frequency", visible = false }],
+              [{ expression = "100*(m4/(m3+m4))", id = "e1", label = "Change Failure Rate" }],
+              [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "DEFAULT", { label = "Other failures", id = "m4", visible = false }]
+            ]
+            view     = "timeSeries"
+            stacked  = false
+            region   = local.current_region
+            liveData = true
+            stat     = "Sum"
+            period   = 43200
+            title    = "Change Failure Rate"
+            yAxis = {
+              left = {
+                showUnits = false
+                label     = "Percentage"
+              }
+            }
+          }
+        },
+        {
+          type   = "metric"
+          x      = 6
+          y      = 0
+          width  = 6
+          height = 3
+          properties = {
+            metrics = [
+              [{ expression = "METRICS()/(1000*60)", id = "e1", label = "Mean Time to Recovery" }],
+              [local.metric_namespace, "MeanTimeToRecovery", "PipelineName", each.key, "StateName", state, { id = "m4", visible = false }]
+            ]
+            view     = "timeSeries"
+            stacked  = false
+            region   = local.current_region
+            liveData = true
+            stat     = "Average"
+            period   = 43200
+            title    = "Mean Time to Recovery"
+            yAxis = {
+              left = {
+                showUnits = false
+                label     = "Minutes"
+              }
+            }
+          }
         }
-        }
-      ]
+        ]
+      ])
     )
   })
   # TODO: Add lifecycle rule ignoring changes to dashboard
