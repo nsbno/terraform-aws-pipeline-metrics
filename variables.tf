@@ -10,7 +10,6 @@ variable "state_machine_arns" {
 
 variable "state_names" {
   description = "Names of states to collect metrics on"
-  default     = ["Deploy Test", "Deploy Stage", "Deploy Prod"]
   type        = list(string)
 }
 

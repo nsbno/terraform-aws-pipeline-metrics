@@ -100,7 +100,7 @@ resource "aws_cloudwatch_dashboard" "this" {
         width  = 18
         height = 3
         properties = {
-          markdown = "\nChange Failure Rate | Deployment Frequency | Lead Time | Mean Time to Recovery\n----|-----|----|-----\nPercentage of failed deployments to production | Frequency of  successful deployments to production | Pipeline execution time for executions that successfully deploy to production | Time it takes to go from a failed to a successful deployment to production\n"
+          markdown = "\nChange Failure Rate (CFR) | Deployment Frequency (DF) | Lead Time (LT) | Mean Time to Recovery (MTTR)\n----|-----|----|-----\nPercentage of failed states | Frequency of  successful states | Pipeline execution time for executions that successfully deploy to production | Time it takes to go from a failed to a successful state \n"
         }
         },
         {
@@ -118,7 +118,7 @@ resource "aws_cloudwatch_dashboard" "this" {
             region = local.current_region
             stat   = "Average"
             period = 259200
-            title  = "Pipeline metrics"
+            title  = "Overall Pipeline Metrics"
           }
         }
       ],
@@ -147,4 +147,5 @@ resource "aws_cloudwatch_dashboard" "this" {
       ]
     )
   })
+  # TODO: Add lifecycle rule ignoring changes to dashboard
 }
