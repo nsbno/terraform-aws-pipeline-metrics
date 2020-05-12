@@ -227,6 +227,9 @@ def set_ssm_value_for_state(
         client = boto3.client("ssm")
     formatted_state_name = replace_special_characters(state_name)
     parameter_name = f"/{state_machine_name}/{formatted_state_name}"
+    logger.info(
+        "Setting SSM parameter '%s' to value '%s'", parameter_name, value
+    )
     client.put_parameter(
         Name=parameter_name, Overwrite=True, Type="String", Value=value
     )
@@ -266,8 +269,6 @@ def lambda_handler(event, context):
         for state_name in state_names
     ]
 
-    last_event = max(events, key=lambda e: e["id"])
-
     metrics = []
 
     """
@@ -296,6 +297,22 @@ def lambda_handler(event, context):
                 "State '%s' was entered, but did not successfully exit",
                 state["state_name"],
             )
+            if state["ssm_value"] and state["ssm_value"]["fixed"]:
+                new_ssm_value = json.dumps(
+                    {
+                        "failed_execution": execution_arn,
+                        "failed_at": event["detail"]["stopDate"],
+                        "fixed": False,
+                        "fixed_execution": None,
+                        "fixed_at": None,
+                    },
+                )
+                # TODO: Check if parameter already has been updated after the current execution's end time
+                # ssm_last_modified = p["Parameter"]["LastModifiedDate"]
+                set_ssm_value_for_state(
+                    new_ssm_value, state["state_name"], state_machine_name
+                )
+
             metric_name = "StateFail"
             dimensions.append(
                 {
@@ -317,22 +334,19 @@ def lambda_handler(event, context):
             }
         )
 
-        value = get_ssm_value_for_state(
-            state["state_name"], state_machine_name
-        )
         if (
             state["has_successfully_exited_state"]
-            and value
-            and not value["fixed"]
+            and state["ssm_value"]
+            and not state["ssm_value"]["fixed"]
         ):
             logger.info(
                 "State '%s' has been restored from a failure in an earlier execution '%s'",
                 state["state_name"],
-                value["failed_execution"],
+                state["ssm_value"]["failed_execution"],
             )
             new_ssm_value = json.dumps(
                 {
-                    **value,
+                    **state["ssm_value"],
                     "fixed": True,
                     "fixed_execution": execution_arn,
                     "fixed_at": timestamp,
@@ -344,7 +358,7 @@ def lambda_handler(event, context):
 
             # Do not update MeanTimeToRecovery if previously failed state failed because of Terraform lock
             failed_execution = get_detailed_execution(
-                {"executionArn": value["failed_execution"]}
+                {"executionArn": state["ssm_value"]["failed_execution"]}
             )
             failed_execution_event = get_fail_event_for_state(
                 state["state_name"], failed_execution["events"]
@@ -374,7 +388,7 @@ def lambda_handler(event, context):
                         ],
                         "Timestamp": timestamp,
                         "Value": event["detail"]["stopDate"]
-                        - value["failed_at"],
+                        - state["ssm_value"]["failed_at"],
                         "Unit": "Milliseconds",
                     }
                 )
@@ -402,34 +416,6 @@ def lambda_handler(event, context):
                     "Unit": "Milliseconds",
                 }
             )
-    elif status == "FAILED":
-        """
-        Execution failed. Check if this is the first failure, and update SSM if necessary
-        """
-        failed_event = find_event_by_backtracking(
-            last_event, events, lambda e: e["type"].endswith("StateEntered")
-        )
-        state_name = failed_event["stateEnteredEventDetails"]["name"]
-        if state_name in state_names:
-            value = get_ssm_value_for_state(state_name, state_machine_name)
-
-            if value and value["fixed"]:
-                new_ssm_value = json.dumps(
-                    {
-                        "failed_execution": execution_arn,
-                        "failed_at": event["detail"]["stopDate"],
-                        "fixed": False,
-                        "fixed_execution": None,
-                        "fixed_at": None,
-                    },
-                )
-                set_ssm_value_for_state(
-                    new_ssm_value, state_name, state_machine_name
-                )
-            # TODO: Check if parameter already has been updated after the current execution's end time
-            # ssm_last_modified = p["Parameter"]["LastModifiedDate"]
-    else:
-        logger.error("Unexpected execution status '%s'", status)
 
     if len(metrics):
         logger.info("Sending metrics to CloudWatch '%s'", metrics)
