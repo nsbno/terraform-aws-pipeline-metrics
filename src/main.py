@@ -61,6 +61,28 @@ def has_entered_state(state, events):
     )
 
 
+def get_fail_event_for_state(state, events):
+    """Return the event that made a given state fail during an execution"""
+    exit_event = next(
+        (
+            e
+            for e in events
+            if e["type"].endswith("StateExited")
+            and e["stateExitedEventDetails"]["name"] == state
+        ),
+        None,
+    )
+    if exit_event:
+        prev_event = find_event_by_backtracking(
+            exit_event,
+            events,
+            lambda e: e["id"] == exit_event["previousEventId"]
+            and e["type"].endswith("Failed"),
+        )
+        return prev_event
+    return None
+
+
 def has_successfully_exited_state(state, events):
     """Check if a given state has successfully exited at some point during an execution"""
     exit_event = next(
@@ -176,6 +198,8 @@ def get_state_info(state_name, state_machine_name, events):
     """Return a dictionary containing various data for a given state in a given execution"""
     value = get_ssm_value_for_state(state_name, state_machine_name)
     return {
+        "state_name": state_name,
+        "fail_event": get_fail_event_for_state(state_name, events),
         "has_entered_state": has_entered_state(state_name, events),
         "has_successfully_exited_state": has_successfully_exited_state(
             state_name, events
@@ -252,39 +276,37 @@ def lambda_handler(event, context):
     """
     Collect metric on individidual states and update SSM if necessary
     """
-    for state_name in state_names:
-        if not has_entered_state(state_name, events):
+    for state in detailed_states:
+        if not state["has_entered_state"]:
             logger.info(
                 "Not collecting metrics for state '%s' as it was never entered during execution",
-                state_name,
+                state["state_name"],
             )
             continue
         # TODO Report timestamp of the event in question
         dimensions = [
             {"Name": "PipelineName", "Value": state_machine_name},
-            {"Name": "StateName", "Value": state_name},
+            {"Name": "StateName", "Value": state["state_name"]},
         ]
         metric_name = "StateSuccess"
-        successfully_exited_state = has_successfully_exited_state(
-            state_name, events
-        )
-        if successfully_exited_state:
+        if state["has_successfully_exited_state"]:
             logger.info(
-                "State '%s' was entered and successfully exited", state_name
+                "State '%s' was entered and successfully exited",
+                state["state_name"],
             )
         else:
             logger.info(
                 "State '%s' was entered, but did not successfully exit",
-                state_name,
+                state["state_name"],
             )
             metric_name = "StateFail"
             dimensions.append(
                 {
                     "Name": "FailType",
                     "Value": "TERRAFORM_LOCK"
-                    if error_cause_contains(
-                        "Terraform acquires a state lock", events
-                    )
+                    if state["fail_event"]
+                    and "Terraform acquires a state lock"
+                    in state["fail_event"]["taskFailedEventDetails"]["cause"]
                     else "DEFAULT",
                 }
             )
@@ -298,11 +320,17 @@ def lambda_handler(event, context):
             }
         )
 
-        value = get_ssm_value_for_state(state_name, state_machine_name)
-        if successfully_exited_state and value and not value["fixed"]:
+        value = get_ssm_value_for_state(
+            state["state_name"], state_machine_name
+        )
+        if (
+            state["has_successfully_exited_state"]
+            and value
+            and not value["fixed"]
+        ):
             logger.info(
                 "State '%s' has been restored from a failure in an earlier execution '%s'",
-                state_name,
+                state["state_name"],
                 value["failed_execution"],
             )
             new_ssm_value = json.dumps(
@@ -314,19 +342,24 @@ def lambda_handler(event, context):
                 },
             )
             set_ssm_value_for_state(
-                new_ssm_value, state_name, state_machine_name
+                new_ssm_value, state["state_name"], state_machine_name
             )
 
             # Do not update MeanTimeToRecovery if previously failed state failed because of Terraform lock
             failed_execution = get_detailed_execution(
                 {"executionArn": value["failed_execution"]}
             )
-            if error_cause_contains(
-                "Terraform acquires a state lock", failed_execution["events"]
+            failed_execution_event = get_fail_event_for_state(
+                state["state_name"], failed_execution["events"]
+            )
+            if (
+                failed_execution_event
+                and "Terraform acquires a state lock"
+                in failed_execution_event["taskFailedEventDetails"]["cause"]
             ):
                 logger.info(
                     "Not updating MeanTimeToRecovery for state '%s' as earlier execution failed due to Terraform lock",
-                    state_name,
+                    state["state_name"],
                 )
             else:
                 metrics.append(
@@ -337,7 +370,10 @@ def lambda_handler(event, context):
                                 "Name": "PipelineName",
                                 "Value": state_machine_name,
                             },
-                            {"Name": "StateName", "Value": state_name},
+                            {
+                                "Name": "StateName",
+                                "Value": state["state_name"],
+                            },
                         ],
                         "Timestamp": timestamp,
                         "Value": event["detail"]["stopDate"]
