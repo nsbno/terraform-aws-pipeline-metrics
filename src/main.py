@@ -63,24 +63,21 @@ def has_entered_state(state, events):
 
 def get_fail_event_for_state(state, events):
     """Return the event that made a given state fail during an execution"""
-    exit_event = next(
+    failed_event = next(
         (
             e
             for e in events
-            if e["type"].endswith("StateExited")
-            and e["stateExitedEventDetails"]["name"] == state
+            if e["type"].endswith("TaskFailed")
+            and find_event_by_backtracking(
+                e,
+                events,
+                lambda e2: e2["type"].endswith("StateEntered")
+                and e2["stateEnteredEventDetails"]["name"] == state,
+            )
         ),
         None,
     )
-    if exit_event:
-        prev_event = find_event_by_backtracking(
-            exit_event,
-            events,
-            lambda e: e["id"] == exit_event["previousEventId"]
-            and e["type"].endswith("Failed"),
-        )
-        return prev_event
-    return None
+    return failed_event
 
 
 def has_successfully_exited_state(state, events):
