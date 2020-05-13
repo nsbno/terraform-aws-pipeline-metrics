@@ -212,9 +212,11 @@ def replace_special_characters(string):
     return re.sub(r"[^a-zA-Z0-9_-]", "_", string)
 
 
-def get_state_info(state_name, state_machine_name, events):
+def get_state_info(state_name, state_machine_name, events, table):
     """Return a dictionary containing various data for a given state in a given execution"""
-    value = get_ssm_value_for_state(state_name, state_machine_name)
+    state_data = get_state_data_from_dynamodb(
+        state_name, state_machine_name, table
+    )
     return {
         "state_name": state_name,
         "fail_event": get_fail_event_for_state(state_name, events),
@@ -222,20 +224,14 @@ def get_state_info(state_name, state_machine_name, events):
         "has_successfully_exited_state": has_successfully_exited_state(
             state_name, events
         ),
-        "ssm_value": value,
+        "state_data": state_data,
     }
 
 
-def get_ssm_value_for_state(state_name, state_machine_name, client=None):
-    """Return the JSON-formatted value of an SSM parameter used to store information for a given state of a given state machine"""
-    if client is None:
-        client = boto3.client("ssm")
-
-    dynamodb = boto3.resource("dynamodb")
-    table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+def get_state_data_from_dynamodb(state_name, state_machine_name, table):
+    """Return an item in a DynamoDB table containing information for a given state of a given state machine"""
     try:
         response = table.get_item(
-            TableName=os.environ["DYNAMODB_TABLE"],
             Key={
                 "state_machine_name": state_machine_name,
                 "state_name": state_name,
@@ -254,54 +250,26 @@ def get_ssm_value_for_state(state_name, state_machine_name, client=None):
                 },
             }
             logger.info("Found DynamoDB item '%s'", item)
+            return item
         else:
             logger.info(
                 "Did not find DynamoDB item, got response '%s'", response
             )
-
+            return None
     except:
         # except dynamodb_client.exceptions.ResourceNotFoundException:
         logger.exception("Could not get DynamoDB item")
-
-    formatted_state_name = replace_special_characters(state_name)
-    parameter_name = f"/{state_machine_name}/{formatted_state_name}"
-    try:
-        parameter = client.get_parameter(Name=parameter_name)
-        value = json.loads(parameter["Parameter"]["Value"])
-        return value
-    except client.exceptions.ParameterNotFound:
         return None
 
 
-def set_ssm_value_for_state(
-    value, state_name, state_machine_name, client=None
-):
-    """Set a JSON-formatted value of an SSM parameter used to store information for a given state of a given state machine"""
-    if client is None:
-        client = boto3.client("ssm")
-    dynamodb = boto3.resource("dynamodb")
-    table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+def set_state_data_in_dynamodb(state_data, table):
+    """Write/update an item in a DynamoDB table containing information for a given state of a given state machine"""
     try:
-        json_decoded = json.loads(value)
-        item = {
-            "state_machine_name": state_machine_name,
-            "state_name": state_name,
-            **json_decoded,
-        }
-        logger.info("Updating DynamoDB Item '%s'", item)
+        logger.info("Updating DynamoDB Item '%s'", state_data)
 
-        item = table.put_item(Item=item)
+        item = table.put_item(Item=state_data)
     except:
         logger.exception("Failed to update DynamoDB item")
-
-    formatted_state_name = replace_special_characters(state_name)
-    parameter_name = f"/{state_machine_name}/{formatted_state_name}"
-    logger.info(
-        "Setting SSM parameter '%s' to value '%s'", parameter_name, value
-    )
-    client.put_parameter(
-        Name=parameter_name, Overwrite=True, Type="String", Value=value
-    )
 
 
 def lambda_handler(event, context):
@@ -318,6 +286,10 @@ def lambda_handler(event, context):
     execution_arn = event["detail"]["executionArn"]
     timestamp = event["time"]
     state_machine_name = state_machine_arn.split(":")[6]
+
+    dynamodb = boto3.resource("dynamodb")
+    dynamodb_table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+
     execution_name = execution_arn.split(":")[7]
 
     if not len(
@@ -334,7 +306,7 @@ def lambda_handler(event, context):
     events = response["events"]
 
     detailed_states = [
-        get_state_info(state_name, state_machine_name, events)
+        get_state_info(state_name, state_machine_name, events, dynamodb_table)
         for state_name in state_names
     ]
     logger.info(
@@ -369,21 +341,19 @@ def lambda_handler(event, context):
                 "State '%s' was entered, but did not successfully exit",
                 state["state_name"],
             )
-            if state["ssm_value"] and state["ssm_value"]["fixed"]:
-                new_ssm_value = json.dumps(
-                    {
-                        "failed_execution": execution_arn,
-                        "failed_at": event["detail"]["stopDate"],
-                        "fixed": False,
-                        "fixed_execution": None,
-                        "fixed_at": None,
-                    },
-                )
+            if state["state_data"] and state["state_data"]["fixed"]:
+                new_state_data = {
+                    "state_name": state["state_name"],
+                    "state_machine_name": state_machine_name,
+                    "failed_execution": execution_arn,
+                    "failed_at": event["detail"]["stopDate"],
+                    "fixed": False,
+                    "fixed_execution": None,
+                    "fixed_at": None,
+                }
                 # TODO: Check if parameter already has been updated after the current execution's end time
                 # ssm_last_modified = p["Parameter"]["LastModifiedDate"]
-                set_ssm_value_for_state(
-                    new_ssm_value, state["state_name"], state_machine_name
-                )
+                set_state_data_in_dynamodb(new_state_data, dynamodb_table)
 
             metric_name = "StateFail"
             dimensions.append(
@@ -408,34 +378,30 @@ def lambda_handler(event, context):
 
         if (
             state["has_successfully_exited_state"]
-            and state["ssm_value"]
-            and not state["ssm_value"]["fixed"]
+            and state["state_data"]
+            and not state["state_data"]["fixed"]
         ):
             logger.info(
                 "State '%s' has been restored from a failure in an earlier execution '%s'",
                 state["state_name"],
-                state["ssm_value"]["failed_execution"],
+                state["state_data"]["failed_execution"],
             )
-            new_ssm_value = json.dumps(
-                {
-                    **state["ssm_value"],
-                    "fixed": True,
-                    "fixed_execution": execution_arn,
-                    "fixed_at": int(
-                        datetime.strptime(
-                            timestamp, "%Y-%m-%dT%H:%M:%S%z"
-                        ).timestamp()
-                        * 1000
-                    ),
-                },
-            )
-            set_ssm_value_for_state(
-                new_ssm_value, state["state_name"], state_machine_name
-            )
+            new_state_data = {
+                **state["state_data"],
+                "fixed": True,
+                "fixed_execution": execution_arn,
+                "fixed_at": int(
+                    datetime.strptime(
+                        timestamp, "%Y-%m-%dT%H:%M:%S%z"
+                    ).timestamp()
+                    * 1000
+                ),
+            }
+            set_state_data_in_dynamodb(new_state_data, dynamodb_table)
 
             # Do not update MeanTimeToRecovery if previously failed state failed because of Terraform lock
             failed_execution = get_detailed_execution(
-                {"executionArn": state["ssm_value"]["failed_execution"]}
+                {"executionArn": state["state_data"]["failed_execution"]}
             )
             failed_execution_event = get_fail_event_for_state(
                 state["state_name"], failed_execution["events"]
@@ -465,7 +431,7 @@ def lambda_handler(event, context):
                         ],
                         "Timestamp": timestamp,
                         "Value": event["detail"]["stopDate"]
-                        - state["ssm_value"]["failed_at"],
+                        - state["state_data"]["failed_at"],
                         "Unit": "Milliseconds",
                     }
                 )
