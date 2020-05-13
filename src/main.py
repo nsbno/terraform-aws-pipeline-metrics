@@ -67,7 +67,7 @@ def get_fail_event_for_state(state, events):
         (
             e
             for e in events
-            if e["type"].endswith("TaskFailed")
+            if e["type"].endswith("Failed")
             and find_event_by_backtracking(
                 e,
                 events,
@@ -77,7 +77,27 @@ def get_fail_event_for_state(state, events):
         ),
         None,
     )
-    return failed_event
+    if failed_event:
+        # Different state types use different names for storing details about the failed event
+        # taskFailedEventDetails, activityFailedEventDetails, etc.
+        logger.info("State '%s failed in event '%s'", state, failed_event)
+        failed_event_details_key = next(
+            (
+                key
+                for key in failed_event
+                if key.endswith("FailedEventDetails")
+                and all(
+                    required_key in failed_event[key]
+                    for required_key in ["error", "cause"]
+                )
+            ),
+            None,
+        )
+        return {
+            **failed_event,
+            "failedEventDetails": failed_event.get(failed_event_details_key),
+        }
+    return None
 
 
 def has_successfully_exited_state(state, events):
@@ -268,6 +288,9 @@ def lambda_handler(event, context):
         get_state_info(state_name, state_machine_name, events)
         for state_name in state_names
     ]
+    logger.info(
+        "Using detailed information about the states '%s'", detailed_states
+    )
 
     metrics = []
 
@@ -320,7 +343,7 @@ def lambda_handler(event, context):
                     "Value": "TERRAFORM_LOCK"
                     if state["fail_event"]
                     and "Terraform acquires a state lock"
-                    in state["fail_event"]["taskFailedEventDetails"]["cause"]
+                    in state["fail_event"]["failedEventDetails"]["cause"]
                     else "DEFAULT",
                 }
             )
@@ -366,7 +389,7 @@ def lambda_handler(event, context):
             if (
                 failed_execution_event
                 and "Terraform acquires a state lock"
-                in failed_execution_event["taskFailedEventDetails"]["cause"]
+                in failed_execution_event["failedEventDetails"]["cause"]
             ):
                 logger.info(
                     "Not updating MeanTimeToRecovery for state '%s' as earlier execution failed due to Terraform lock",
