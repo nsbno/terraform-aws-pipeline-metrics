@@ -422,7 +422,9 @@ def lambda_handler(event, context):
                     "fixed": True,
                     "fixed_execution": execution_arn,
                     "fixed_at": int(
-                        datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S%z")
+                        datetime.strptime(
+                            timestamp, "%Y-%m-%dT%H:%M:%S%z"
+                        ).timestamp()
                         * 1000
                     ),
                 },
