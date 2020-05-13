@@ -229,6 +229,23 @@ def get_ssm_value_for_state(state_name, state_machine_name, client=None):
     """Return the JSON-formatted value of an SSM parameter used to store information for a given state of a given state machine"""
     if client is None:
         client = boto3.client("ssm")
+
+    dynamodb_client = boto3.client("dynamodb")
+    try:
+        item = dynamodb_client.get_item(
+            TableName=os.environ["DYNAMODB_TABLE"],
+            Key={
+                "state_machine_name": {"S": state_machine_name},
+                "state_name": {"S": state_name},
+            },
+            ConsistentRead=True,
+        )
+        logger.info("Found DynamoDB item '%s'", item)
+
+    except:
+        # except dynamodb_client.exceptions.ResourceNotFoundException:
+        logger.exception("Could not get DynamoDB item")
+
     formatted_state_name = replace_special_characters(state_name)
     parameter_name = f"/{state_machine_name}/{formatted_state_name}"
     try:
@@ -245,6 +262,36 @@ def set_ssm_value_for_state(
     """Set a JSON-formatted value of an SSM parameter used to store information for a given state of a given state machine"""
     if client is None:
         client = boto3.client("ssm")
+    dynamodb_client = boto3.client("dynamodb")
+    try:
+        type_conversions = {
+            str: lambda v: {"S": v},
+            bool: lambda v: {"BOOL": v},
+            int: lambda v: {"N": str(v)},
+        }
+        json_decoded = json.loads(value)
+        json_decoded = {
+            k: type_conversions.get(type(v), lambda _: None)(v)
+            for k, v in json_decoded.items()
+        }
+        # Remove empty strings and None values
+        json_decoded = {
+            k: v for k, v in json_decoded.items() if v is not None and v != ""
+        }
+        item = {
+            "state_machine_name": {"S": state_machine_name},
+            "state_name": {"S": state_name},
+            **json_decoded,
+        }
+        logger.info("Updating DynamoDB Item '%s'", item)
+
+        item = dynamodb_client.put_item(
+            TableName=os.environ["DYNAMODB_TABLE"], Item=item
+        )
+
+    except:
+        logger.exception("Failed to update DynamoDB item")
+
     formatted_state_name = replace_special_characters(state_name)
     parameter_name = f"/{state_machine_name}/{formatted_state_name}"
     logger.info(

@@ -15,6 +15,24 @@ data "archive_file" "this" {
   output_path = "${path.module}/src/main.zip"
 }
 
+resource "aws_dynamodb_table" "this" {
+  name         = "${var.name_prefix}-pipeline-state-data"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "state_machine_name"
+  range_key    = "state_name"
+
+  attribute {
+    name = "state_machine_name"
+    type = "S"
+  }
+
+  attribute {
+    name = "state_name"
+    type = "S"
+  }
+  tags = var.tags
+}
+
 resource "aws_lambda_function" "this" {
   function_name    = "${var.name_prefix}-pipeline-metrics"
   handler          = "main.lambda_handler"
@@ -24,6 +42,7 @@ resource "aws_lambda_function" "this" {
   source_code_hash = filebase64sha256(data.archive_file.this.output_path)
   environment {
     variables = {
+      DYNAMODB_TABLE   = aws_dynamodb_table.this.name
       STATE_NAMES      = jsonencode(var.state_names)
       METRIC_NAMESPACE = local.metric_namespace
       METRIC_DIMENSION = local.metric_dimension
@@ -50,6 +69,11 @@ resource "aws_iam_role_policy" "cloudwatch_to_lambda" {
 
 resource "aws_iam_role_policy" "ssm_to_lambda" {
   policy = data.aws_iam_policy_document.ssm_for_lambda.json
+  role   = aws_iam_role.this.id
+}
+
+resource "aws_iam_role_policy" "dynamodb_to_lambda" {
+  policy = data.aws_iam_policy_document.dynamodb_for_lambda.json
   role   = aws_iam_role.this.id
 }
 

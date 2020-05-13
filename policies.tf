@@ -35,6 +35,23 @@ data "aws_iam_policy_document" "ssm_for_lambda" {
   }
 }
 
+data "aws_iam_policy_document" "dynamodb_for_lambda" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "dynamodb:BatchGetItem",
+      "dynamodb:GetItem",
+      "dynamodb:Query",
+      "dynamodb:Scan",
+      "dynamodb:BatchWriteItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem"
+    ]
+    resources = [aws_dynamodb_table.this.arn]
+  }
+}
+
+
 data "aws_iam_policy_document" "logs_for_lambda" {
   statement {
     effect    = "Allow"
