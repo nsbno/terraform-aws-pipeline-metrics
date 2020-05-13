@@ -9,6 +9,7 @@
 """
 from concurrent.futures import ThreadPoolExecutor as PoolExecutor
 from timeit import default_timer as timer
+import decimal
 import os
 import logging
 import json
@@ -233,7 +234,7 @@ def get_ssm_value_for_state(state_name, state_machine_name, client=None):
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
     try:
-        item = table.get_item(
+        response = table.get_item(
             TableName=os.environ["DYNAMODB_TABLE"],
             Key={
                 "state_machine_name": state_machine_name,
@@ -241,7 +242,22 @@ def get_ssm_value_for_state(state_name, state_machine_name, client=None):
             },
             ConsistentRead=True,
         )
-        logger.info("Found DynamoDB item '%s'", item)
+        if response.get("Item", None):
+            item = response["Item"]
+            # Convert Decimal to integer
+            item = {
+                **item,
+                **{
+                    k: int(v)
+                    for k, v in item.items()
+                    if isinstance(v, decimal.Decimal)
+                },
+            }
+            logger.info("Found DynamoDB item '%s'", item)
+        else:
+            logger.info(
+                "Did not find DynamoDB item, got response '%s'", response
+            )
 
     except:
         # except dynamodb_client.exceptions.ResourceNotFoundException:
