@@ -405,7 +405,10 @@ def lambda_handler(event, context):
                     **state["ssm_value"],
                     "fixed": True,
                     "fixed_execution": execution_arn,
-                    "fixed_at": timestamp,
+                    "fixed_at": int(
+                        datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S%z")
+                        * 1000
+                    ),
                 },
             )
             set_ssm_value_for_state(
