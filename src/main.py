@@ -240,12 +240,8 @@ def get_state_data_from_dynamodb(state_name, state_machine_name, table):
             item = response["Item"]
             # Convert Decimal to integer
             item = {
-                **item,
-                **{
-                    k: int(v)
-                    for k, v in item.items()
-                    if isinstance(v, decimal.Decimal)
-                },
+                k: v if not isinstance(v, decimal.Decimal) else int(v)
+                for k, v in item.items()
             }
             logger.info("Found DynamoDB item '%s'", item)
             return item
