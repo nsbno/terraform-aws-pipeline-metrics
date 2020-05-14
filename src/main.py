@@ -38,24 +38,22 @@ def find_event_by_backtracking(initial_event, events, condition_fn):
     return event
 
 
-def has_entered_state(state, events):
+def get_enter_event(state, events):
     """Check if a given state has been entered at some point during an execution"""
-    return bool(
-        next(
-            (
-                e
-                for e in events
-                if e["type"].endswith("StateEntered")
-                and e["stateEnteredEventDetails"]["name"] == state
-            ),
-            None,
-        )
+    return next(
+        (
+            e
+            for e in events
+            if e["type"].endswith("StateEntered")
+            and e["stateEnteredEventDetails"]["name"] == state
+        ),
+        None,
     )
 
 
-def get_fail_event_for_state(state, events):
+def get_fail_event(state, events):
     """Return the event that made a given state fail during an execution"""
-    failed_event = next(
+    fail_event = next(
         (
             e
             for e in events
@@ -69,32 +67,46 @@ def get_fail_event_for_state(state, events):
         ),
         None,
     )
-    if failed_event:
+    if fail_event:
         # Different state types use different names for storing details about the failed event
         # taskFailedEventDetails, activityFailedEventDetails, etc.
-        logger.info("State '%s failed in event '%s'", state, failed_event)
-        failed_event_details_key = next(
+        logger.info("State '%s failed in event '%s'", state, fail_event)
+        fail_event_details_key = next(
             (
                 key
-                for key in failed_event
+                for key in fail_event
                 if key.endswith("FailedEventDetails")
                 and all(
-                    required_key in failed_event[key]
+                    required_key in fail_event[key]
                     for required_key in ["error", "cause"]
                 )
             ),
             None,
         )
         return {
-            **failed_event,
-            "failedEventDetails": failed_event.get(failed_event_details_key),
+            **fail_event,
+            "failedEventDetails": fail_event.get(fail_event_details_key),
         }
     return None
 
 
-def has_successfully_exited_state(state, events):
+def get_success_event(state, events):
     """Check if a given state has successfully exited at some point during an execution"""
-    exit_event = next(
+    exit_event = get_exit_event(state, events)
+    if exit_event:
+        success_event = find_event_by_backtracking(
+            exit_event,
+            events,
+            lambda e: e["id"] == exit_event["previousEventId"]
+            and e["type"].endswith("Succeeded"),
+        )
+        return success_event
+    return None
+
+
+def get_exit_event(state, events):
+    """Check if a given state has been exited at some point during an execution"""
+    return next(
         (
             e
             for e in events
@@ -102,31 +114,6 @@ def has_successfully_exited_state(state, events):
             and e["stateExitedEventDetails"]["name"] == state
         ),
         None,
-    )
-    if exit_event:
-        prev_event = find_event_by_backtracking(
-            exit_event,
-            events,
-            lambda e: e["id"] == exit_event["previousEventId"]
-            and e["type"].endswith("Succeeded"),
-        )
-        if prev_event:
-            return True
-    return False
-
-
-def has_exited_state(state, events):
-    """Check if a given state has been exited at some point during an execution"""
-    return bool(
-        next(
-            (
-                e
-                for e in events
-                if e["type"].endswith("StateExited")
-                and e["stateExitedEventDetails"]["name"] == state
-            ),
-            None,
-        )
     )
 
 
@@ -203,13 +190,17 @@ def get_state_info(state_name, state_machine_name, events, table):
     state_data = get_state_data_from_dynamodb(
         state_name, state_machine_name, table
     )
+    enter_event = get_enter_event(state_name, events)
+    fail_event = get_fail_event(state_name, events)
+    success_event = get_success_event(state_name, events)
+    exit_event = get_exit_event(state_name, events)
+
     return {
         "state_name": state_name,
-        "fail_event": get_fail_event_for_state(state_name, events),
-        "has_entered_state": has_entered_state(state_name, events),
-        "has_successfully_exited_state": has_successfully_exited_state(
-            state_name, events
-        ),
+        "enter_event": enter_event,
+        "fail_event": fail_event,
+        "success_event": success_event,
+        "exit_event": exit_event,
         "state_data": state_data,
     }
 
@@ -325,7 +316,7 @@ def lambda_handler(event, context):
     Collect metric on individidual states and update SSM if necessary
     """
     for state in detailed_states:
-        if not state["has_entered_state"]:
+        if not state["enter_event"]:
             logger.info(
                 "Not collecting metrics for state '%s' as it was never entered during execution",
                 state["state_name"],
@@ -337,7 +328,7 @@ def lambda_handler(event, context):
             {"Name": "StateName", "Value": state["state_name"]},
         ]
         metric_name = "StateSuccess"
-        if state["has_successfully_exited_state"]:
+        if state["success_event"] and state["exit_event"]:
             logger.info(
                 "State '%s' was entered and successfully exited",
                 state["state_name"],
@@ -349,10 +340,11 @@ def lambda_handler(event, context):
             )
             if state["state_data"] and state["state_data"]["fixed"]:
                 new_state_data = {
-                    "state_name": state["state_name"],
-                    "state_machine_name": state_machine_name,
+                    **state["state_data"],
                     "failed_execution": execution_arn,
-                    "failed_at": event["detail"]["stopDate"],
+                    "failed_at": int(
+                        state["exit_event"]["timestamp"].timestamp() * 1000
+                    ),
                     "fixed": False,
                     "fixed_execution": None,
                     "fixed_at": None,
@@ -376,70 +368,77 @@ def lambda_handler(event, context):
             {
                 "MetricName": metric_name,
                 "Dimensions": dimensions,
-                "Timestamp": timestamp,
+                "Timestamp": state["exit_event"]["timestamp"],
                 "Value": 1,
                 "Unit": "Count",
             }
         )
 
         if (
-            state["has_successfully_exited_state"]
+            state["success_event"]
+            and state["exit_event"]
             and state["state_data"]
             and not state["state_data"]["fixed"]
         ):
-            logger.info(
-                "State '%s' has been restored from a failure in an earlier execution '%s'",
-                state["state_name"],
-                state["state_data"]["failed_execution"],
-            )
-            new_state_data = {
-                **state["state_data"],
-                "fixed": True,
-                "fixed_execution": execution_arn,
-                "fixed_at": int(
-                    datetime.strptime(
-                        timestamp, "%Y-%m-%dT%H:%M:%S%z"
-                    ).timestamp()
-                    * 1000
-                ),
-            }
-            set_state_data_in_dynamodb(new_state_data, dynamodb_table)
-
-            # Do not update MeanTimeToRecovery if previously failed state failed because of Terraform lock
-            failed_execution = get_detailed_execution(
-                {"executionArn": state["state_data"]["failed_execution"]}
-            )
-            failed_execution_event = get_fail_event_for_state(
-                state["state_name"], failed_execution["events"]
-            )
-            if (
-                failed_execution_event
-                and "Terraform acquires a state lock"
-                in failed_execution_event["failedEventDetails"]["cause"]
-            ):
+            if state["state_data"]["failed_at"] < event["detail"]["startDate"]:
                 logger.info(
-                    "Not updating MeanTimeToRecovery for state '%s' as earlier execution failed due to Terraform lock",
+                    "State '%s' has been restored from a failure in an earlier execution '%s'",
                     state["state_name"],
+                    state["state_data"]["failed_execution"],
                 )
+                new_state_data = {
+                    **state["state_data"],
+                    "fixed": True,
+                    "fixed_execution": execution_arn,
+                    "fixed_at": int(
+                        state["exit_event"]["timestamp"].timestamp() * 1000
+                    ),
+                }
+                set_state_data_in_dynamodb(new_state_data, dynamodb_table)
+
+                # Do not update MeanTimeToRecovery if previously failed state failed because of Terraform lock
+                failed_execution = get_detailed_execution(
+                    {"executionArn": state["state_data"]["failed_execution"]}
+                )
+                failed_execution_event = get_fail_event(
+                    state["state_name"], failed_execution["events"]
+                )
+                if (
+                    failed_execution_event
+                    and "Terraform acquires a state lock"
+                    in failed_execution_event["failedEventDetails"]["cause"]
+                ):
+                    logger.info(
+                        "Not updating MeanTimeToRecovery for state '%s' as earlier execution failed due to Terraform lock",
+                        state["state_name"],
+                    )
+                else:
+                    metrics.append(
+                        {
+                            "MetricName": "MeanTimeToRecovery",
+                            "Dimensions": [
+                                {
+                                    "Name": "PipelineName",
+                                    "Value": state_machine_name,
+                                },
+                                {
+                                    "Name": "StateName",
+                                    "Value": state["state_name"],
+                                },
+                            ],
+                            "Timestamp": state["exit_event"]["timestamp"],
+                            "Value": int(
+                                state["exit_event"]["timestamp"].timestamp()
+                                * 1000
+                            )
+                            - state["state_data"]["failed_at"],
+                            "Unit": "Milliseconds",
+                        }
+                    )
             else:
-                metrics.append(
-                    {
-                        "MetricName": "MeanTimeToRecovery",
-                        "Dimensions": [
-                            {
-                                "Name": "PipelineName",
-                                "Value": state_machine_name,
-                            },
-                            {
-                                "Name": "StateName",
-                                "Value": state["state_name"],
-                            },
-                        ],
-                        "Timestamp": timestamp,
-                        "Value": event["detail"]["stopDate"]
-                        - state["state_data"]["failed_at"],
-                        "Unit": "Milliseconds",
-                    }
+                logger.info(
+                    "State '%s' was in a failed state, but the failure occured AFTER the current execution had started, so skipping metric collecting",
+                    state["state_name"],
                 )
 
     if status == "SUCCEEDED":
@@ -451,7 +450,7 @@ def lambda_handler(event, context):
         if (
             start_time
             and end_time
-            and all(state["has_entered_state"] for state in detailed_states)
+            and all(state["enter_event"] for state in detailed_states)
         ):
             duration = end_time - start_time
             metrics.append(
