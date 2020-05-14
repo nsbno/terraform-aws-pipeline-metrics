@@ -23,15 +23,6 @@ from urllib import request
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Deployment Frequency: Average number of executions that successfully run through `Deploy Prod`
-# Change Failure Rate: Percentage of production deployments that have failed
-# Mean Time to Recovery: Average time it takes to go from a failed to a successful production deployment
-# Lead Time: Average time for successful production deployments (entire execution). for Time for CircleCI + Step Functions
-# TODO: Integrate CircleCI execution time into lead time (different repos with different build times can all trigger the pipeline)
-# TODO: Metrics on failing Integration Tests, Smoke Tests?
-# TODO: Metrics on Pipeline aborted
-# TODO: Metrics on Pipeline timed out
-
 
 def find_event_by_backtracking(initial_event, events, condition_fn):
     """Backtracks to the first event that matches a specific condition and returns that event"""
@@ -139,20 +130,20 @@ def has_exited_state(state, events):
     )
 
 
-def error_cause_contains(text, events):
-    """Check if a given string exists in the error cause of an execution"""
-    fail_event = next(
-        (e for e in events if e["type"] == "ExecutionFailed"), {}
-    )
-    details = fail_event.get("executionFailedEventDetails", {})
-    cause = details.get("cause", "")
-    if not (fail_event or details or cause):
-        return False
-    return text in cause
-
-
 def get_detailed_execution(execution, limit=500, client=None):
-    """Returns an execution augmented with its execution history"""
+    """Augment an execution with its execution history
+
+    Args:
+        execution: A dictionary containing at least the key `executionArn`
+        limit: Limit the number of events in the execution history
+        client: A Step Functions client
+
+    Returns:
+        The input execution augmented with its execution history
+
+    Raises:
+        botocore.exceptions.ClientError: Failed to get execution history
+    """
     if client is None:
         client = boto3.client("stepfunctions")
     retries = 0
@@ -207,11 +198,6 @@ def get_detailed_executions(state_machine_arn, limit=100, client=None):
     return results
 
 
-def replace_special_characters(string):
-    """Return a string where special characters are replaced by underscores"""
-    return re.sub(r"[^a-zA-Z0-9_-]", "_", string)
-
-
 def get_state_info(state_name, state_machine_name, events, table):
     """Return a dictionary containing various data for a given state in a given execution"""
     state_data = get_state_data_from_dynamodb(
@@ -229,7 +215,19 @@ def get_state_info(state_name, state_machine_name, events, table):
 
 
 def get_state_data_from_dynamodb(state_name, state_machine_name, table):
-    """Return an item in a DynamoDB table containing information for a given state of a given state machine"""
+    """Fetch data about a given state from DynamoDB
+
+    Args:
+        state_machine_name: The name of the state machine
+        state_name: The name of the state
+        table: A DynamoDB.Table instance
+
+    Returns:
+        An item stored in the given DynamoDB table under the compound key made up of `state_machine_name` and `state_name` if such an item exists
+
+    Raises:
+        botocore.exceptions.ClientError: Failed to get item from DynamoDB
+    """
     try:
         response = table.get_item(
             Key={
@@ -256,20 +254,38 @@ def get_state_data_from_dynamodb(state_name, state_machine_name, table):
                 "Did not find DynamoDB item, got response '%s'", response
             )
             return None
-    except:
-        # except dynamodb_client.exceptions.ResourceNotFoundException:
-        logger.exception("Could not get DynamoDB item")
-        return None
+    except botocore.exceptions.ClientError as e:
+        logger.exception(
+            "Failed to get DynamoDB item, API responded with '%s'", e.response,
+        )
+        raise
 
 
 def set_state_data_in_dynamodb(state_data, table):
-    """Write/update an item in a DynamoDB table containing information for a given state of a given state machine"""
+    """Save data about a state to DynamoDB
+
+    Args:
+        state_data: The item to save to the DynamoDB table
+        table: A DynamoDB.Table instance
+
+    Raises:
+        botocore.exceptions.ClientError: Failed to create or update the item in the given DynamoDB table
+        ValueError: State data is missing one or more of the keys that make up the composite primary key in the DynamoDB table
+    """
+    required_keys = ["state_machine_name", "state_name"]
+    if not all(key in state_data for key in required_keys):
+        raise ValueError(
+            "State data missing one or more required keys for the DynamoDB composite primary key"
+        )
     try:
         logger.info("Updating DynamoDB Item '%s'", state_data)
-
         item = table.put_item(Item=state_data)
-    except:
-        logger.exception("Failed to update DynamoDB item")
+    except botocore.exceptions.ClientError as e:
+        logger.exception(
+            "Failed to update DynamoDB item, API responded with '%s'",
+            e.response,
+        )
+        raise
 
 
 def lambda_handler(event, context):
@@ -279,6 +295,7 @@ def lambda_handler(event, context):
     metric_namespace = os.environ["METRIC_NAMESPACE"]
     metric_dimension = os.environ["METRIC_DIMENSION"]
     state_names = json.loads(os.environ["STATE_NAMES"])
+
     logger.info("Collecting metrics for states '%s'", state_names)
 
     status = event["detail"]["status"]
@@ -291,13 +308,6 @@ def lambda_handler(event, context):
     dynamodb_table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
 
     execution_name = execution_arn.split(":")[7]
-
-    if not len(
-        set([replace_special_characters(s) for s in state_names])
-    ) == len(state_names):
-        raise ValueError(
-            "Distinct state names map to the same name when replacing special characters with underscore"
-        )
 
     client = boto3.client("stepfunctions")
     response = client.get_execution_history(
