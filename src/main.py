@@ -438,8 +438,6 @@ def set_state_data_in_dynamodb(state_data, table):
 
 def lambda_handler(event, context):
     logger.info("Lambda triggered with event '%s'", event)
-    if not event["detail-type"] == "Step Functions Execution Status Change":
-        return
 
     region = os.environ["AWS_REGION"]
     metric_namespace = os.environ["METRIC_NAMESPACE"]
