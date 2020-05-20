@@ -28,9 +28,11 @@ logger.setLevel(logging.INFO)
 def find_event_by_backtracking(initial_event, events, condition_fn):
     """Backtracks to the first event that matches a specific condition and returns that event"""
     event = initial_event
+    visited_events = []
     for _ in range(len(events)):
-        if condition_fn(event):
+        if condition_fn(event, visited_events):
             return event
+        visited_events.append(event)
         event = next(
             (e for e in events if e["id"] == event["previousEventId"]), None
         )
@@ -62,8 +64,12 @@ def get_fail_event(state, events):
             and find_event_by_backtracking(
                 e,
                 events,
-                lambda e2: e2["type"].endswith("StateEntered")
-                and e2["stateEnteredEventDetails"]["name"] == state,
+                lambda e2, visited_events: e2["type"].endswith("StateEntered")
+                and e2["stateEnteredEventDetails"]["name"] == state
+                and not any(
+                    visited_event["type"].endswith("StateEntered")
+                    for visited_event in visited_events
+                ),
             )
         ),
         None,
@@ -98,7 +104,7 @@ def get_success_event(state, events):
         success_event = find_event_by_backtracking(
             exit_event,
             events,
-            lambda e: e["id"] == exit_event["previousEventId"]
+            lambda e, _: e["id"] == exit_event["previousEventId"]
             and e["type"].endswith("Succeeded"),
         )
         return success_event
