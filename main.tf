@@ -67,11 +67,6 @@ resource "aws_iam_role_policy" "cloudwatch_to_lambda" {
   role   = aws_iam_role.this.id
 }
 
-resource "aws_iam_role_policy" "ssm_to_lambda" {
-  policy = data.aws_iam_policy_document.ssm_for_lambda.json
-  role   = aws_iam_role.this.id
-}
-
 resource "aws_iam_role_policy" "dynamodb_to_lambda" {
   policy = data.aws_iam_policy_document.dynamodb_for_lambda.json
   role   = aws_iam_role.this.id
