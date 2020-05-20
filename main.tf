@@ -116,6 +116,8 @@ resource "aws_cloudwatch_dashboard" "this" {
   for_each       = toset(local.state_machine_names)
   dashboard_name = "${var.name_prefix}-${each.key}-pipeline-metrics"
   dashboard_body = jsonencode({
+    start          = "-P7D"
+    periodOverride = "inherit"
     widgets = concat(
       [{
         type   = "text"
@@ -165,18 +167,20 @@ resource "aws_cloudwatch_dashboard" "this" {
           height = 3
           properties = {
             metrics = [
-              [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m3", label = "(#) Deployment frequency", stat = "Sum" }],
-              [{ expression = "100*(m4/(m3+m4))", id = "e1", label = "(%) Change failure rate" }],
-              [{ expression = "FLOOR(m1/(60*1000))", label = "(minutes) Mean time to recovery", id = "e3" }],
+              [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m3", stat = "Sum", visible = false }],
+              [{ expression = "m3/(PERIOD(m3)/(3600*24))", id = "e2", label = "(#) Deployment Frequency" }],
+              [{ expression = "100*(m4/(m3+m4))", id = "e1", label = "(%) Change Failure Rate" }],
+              [{ expression = "FLOOR(m1/(60*1000))", label = "(minutes) Mean Time to Recovery", id = "e3" }],
               [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "DEFAULT", { label = "Other failures", id = "m4", stat = "Sum", visible = false }],
               [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "TERRAFORM_LOCK", { label = "Terraform lock failures", id = "m5", stat = "Sum", visible = false }],
               [local.metric_namespace, "MeanTimeToRecovery", "PipelineName", each.key, "StateName", state, { id = "m1", label = "MeanTimeToRecovery", visible = false }]
             ]
-            view   = "singleValue"
-            region = local.current_region
-            stat   = "Average"
-            period = 43200
-            title  = "Key Numbers"
+            view                 = "singleValue"
+            region               = local.current_region
+            stat                 = "Average"
+            period               = 43200
+            title                = "Key Numbers (avg. daily)"
+            setPeriodToTimeRange = true
           }
         },
         {
@@ -194,7 +198,7 @@ resource "aws_cloudwatch_dashboard" "this" {
             region   = local.current_region
             liveData = true
             stat     = "Sum"
-            period   = 43200
+            period   = 86400
             title    = "Deployment Frequency"
             yAxis = {
               left = {
@@ -221,7 +225,7 @@ resource "aws_cloudwatch_dashboard" "this" {
             region   = local.current_region
             liveData = true
             stat     = "Sum"
-            period   = 43200
+            period   = 86400
             title    = "Change Failure Rate"
             yAxis = {
               left = {
@@ -247,7 +251,7 @@ resource "aws_cloudwatch_dashboard" "this" {
             region   = local.current_region
             liveData = true
             stat     = "Average"
-            period   = 43200
+            period   = 86400
             title    = "Mean Time to Recovery"
             yAxis = {
               left = {
