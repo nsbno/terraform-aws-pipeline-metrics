@@ -121,7 +121,7 @@ resource "aws_cloudwatch_dashboard" "this" {
         width  = 24
         height = 2
         properties = {
-          markdown = "\nChange Failure Rate (CFR) | Deployment Frequency (DF) | Lead Time (LT) | Mean Time to Recovery (MTTR)\n----|-----|----|-----\nPercentage of failed states | Frequency of  successful states | Pipeline execution time for executions that successfully deploy to production | Time it takes to go from a failed to a successful state \n"
+          markdown = "\nLead Time (LT) | Change Failure Rate (CFR) | Deployment Frequency (DF) | Mean Time to Recovery (MTTR)\n----|-----|----|-----\nPipeline execution time for executions that are successful | Percentage of times a given state has failed | Number of times a given state has been successful | Time it takes for a given state to go from failure to success\n"
         }
         },
         {
@@ -132,7 +132,7 @@ resource "aws_cloudwatch_dashboard" "this" {
           height = 3
           properties = {
             metrics = [
-              [{ expression = "FLOOR(m2/(60*1000))", label = "(minutes) Lead time", id = "e2" }],
+              [{ expression = "FLOOR(m2/(60*1000))", label = "(minutes) Lead Time", id = "e2" }],
               [local.metric_namespace, "LeadTime", "PipelineName", each.key, { id = "m2", visible = false }],
             ]
             view   = "singleValue"
@@ -173,7 +173,7 @@ resource "aws_cloudwatch_dashboard" "this" {
             view                 = "singleValue"
             region               = local.current_region
             stat                 = "Average"
-            period               = 43200
+            period               = 604800 # Set to large value to avoid incorrect values appearing when auto-refresh is enabled for the CloudWatch Dashboard
             title                = "Key Numbers (avg. daily)"
             setPeriodToTimeRange = true
           }
@@ -197,9 +197,13 @@ resource "aws_cloudwatch_dashboard" "this" {
             title    = "Deployment Frequency"
             yAxis = {
               left = {
+                min       = 0
                 showUnits = false
                 label     = "Frequency"
               }
+            }
+            legend = {
+              position = "hidden"
             }
           }
         },
@@ -224,6 +228,7 @@ resource "aws_cloudwatch_dashboard" "this" {
             title    = "Change Failure Rate"
             yAxis = {
               left = {
+                min       = 0
                 showUnits = false
                 label     = "Percentage"
               }
@@ -251,6 +256,7 @@ resource "aws_cloudwatch_dashboard" "this" {
             yAxis = {
               left = {
                 showUnits = false
+                min       = 0
                 label     = "Minutes"
               }
             }
