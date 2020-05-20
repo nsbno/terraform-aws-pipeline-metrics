@@ -18,20 +18,17 @@ data "aws_iam_policy_document" "cloudwatch_for_lambda" {
   }
 }
 
-# TODO: Scope this down?
 data "aws_iam_policy_document" "step_functions_for_lambda" {
   statement {
     effect    = "Allow"
-    actions   = ["states:GetExecutionHistory", "states:ListExecutions"]
-    resources = ["*"]
+    actions   = ["states:ListExecutions"]
+    resources = var.state_machine_arns
   }
-}
 
-data "aws_iam_policy_document" "ssm_for_lambda" {
   statement {
     effect    = "Allow"
-    actions   = ["ssm:*"]
-    resources = formatlist("arn:aws:ssm:${local.current_region}:${local.current_account_id}:parameter/%s/*", local.state_machine_names)
+    actions   = ["states:GetExecutionHistory"]
+    resources = formatlist("arn:aws:${local.current_region}:${local.current_account_id}:execution:%s:*", local.state_machine_names)
   }
 }
 
