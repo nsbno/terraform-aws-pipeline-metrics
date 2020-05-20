@@ -89,11 +89,7 @@ resource "aws_cloudwatch_event_rule" "this" {
   "source": [
     "aws.states"
   ],
-  "detail-type": [
-    "Step Functions Execution Status Change"
-  ],
   "detail": {
-    "status": ["SUCCEEDED", "FAILED"],
     "stateMachineArn": ${jsonencode(var.state_machine_arns)}
   }
 }
