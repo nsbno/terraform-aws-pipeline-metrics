@@ -28,7 +28,7 @@ data "aws_iam_policy_document" "step_functions_for_lambda" {
   statement {
     effect    = "Allow"
     actions   = ["states:GetExecutionHistory"]
-    resources = formatlist("arn:aws:${local.current_region}:${local.current_account_id}:execution:%s:*", local.state_machine_names)
+    resources = formatlist("arn:aws:states:${local.current_region}:${local.current_account_id}:execution:%s:*", local.state_machine_names)
   }
 }
 
