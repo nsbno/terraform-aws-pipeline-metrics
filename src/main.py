@@ -473,9 +473,6 @@ def lambda_handler(event, context):
 
     metrics = []
 
-    """
-    Collect metric on individidual states and update SSM if necessary
-    """
     for state in detailed_states:
         if not state["enter_event"]:
             logger.info(
@@ -488,12 +485,12 @@ def lambda_handler(event, context):
             {"Name": "PipelineName", "Value": state_machine_name},
             {"Name": "StateName", "Value": state["state_name"]},
         ]
-        metric_name = "StateSuccess"
         if state["success_event"] and state["exit_event"]:
             logger.info(
                 "State '%s' was entered and successfully exited",
                 state["state_name"],
             )
+            metric_name = "StateSuccess"
         else:
             logger.info(
                 "State '%s' was entered, but did not successfully exit",
@@ -557,7 +554,7 @@ def lambda_handler(event, context):
                 }
                 set_state_data_in_dynamodb(new_state_data, dynamodb_table)
 
-                # Do not update MeanTimeToRecovery if previously failed state failed because of Terraform lock
+                # Only update MeanTimeToRecovery if previously failed state failed because of Terraform lock
                 failed_execution = get_detailed_execution(
                     {"executionArn": state["state_data"]["failed_execution"]}
                 )
@@ -598,7 +595,7 @@ def lambda_handler(event, context):
                     )
             else:
                 logger.info(
-                    "State '%s' was in a failed state, but the failure occured AFTER the current execution had started, so skipping metric collecting",
+                    "State '%s' was in a failed state, but the failure occured AFTER the current execution had started, so skipping metric collecting for MeanTimeToRecovery",
                     state["state_name"],
                 )
 
