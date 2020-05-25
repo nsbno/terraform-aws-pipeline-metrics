@@ -241,7 +241,7 @@ resource "aws_cloudwatch_dashboard" "this" {
           height = 3
           properties = {
             metrics = [
-              [{ expression = "METRICS()/(1000*60)", id = "e1", label = "Mean Time to Recovery" }],
+              [{ expression = "m4/(1000*60)", id = "e1", label = "Mean Time to Recovery" }],
               [local.metric_namespace, "MeanTimeToRecovery", "PipelineName", each.key, "StateName", state, { id = "m4", visible = false }]
             ]
             view     = "timeSeries"
