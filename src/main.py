@@ -9,6 +9,7 @@
 """
 from concurrent.futures import ThreadPoolExecutor as PoolExecutor
 from timeit import default_timer as timer
+from functools import reduce
 import decimal
 import os
 import logging
@@ -170,6 +171,187 @@ def get_state_events(state_name, events):
         "exit_event": get_exit_event(state_name, events),
         "enter_event": get_enter_event(state_name, events),
     }
+
+
+def get_detailed_executions(state_machine_arn, limit=100, client=None):
+    """Returns a list of detailed executions sorted by the start date in descending order (i.e., newest execution first)"""
+    if client is None:
+        client = boto3.client("stepfunctions")
+    start = timer()
+    executions = client.list_executions(
+        stateMachineArn=state_machine_arn, maxResults=limit,
+    )["executions"]
+    end = timer()
+    logger.info(f"Took %s s to list %s executions", end - start, limit)
+    results = []
+    start = timer()
+    with PoolExecutor(max_workers=4) as executor:
+        for res in executor.map(
+            lambda e: get_detailed_execution(e, client=client), executions
+        ):
+            results.append(res)
+    end = timer()
+    logger.info(
+        f"Took %s s to get execution history of %s executions in parallel",
+        end - start,
+        limit,
+    )
+    results = sorted(results, key=lambda e: e["startDate"], reverse=True)
+    return results
+
+
+def metrics():
+    """[WIP] Create plots using matplotlib and API. Can be used to periodically create plots instead of running every time an execution succeeds or fails."""
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    states = [
+        "Deploy Test",
+        "Deploy Stage",
+        "Deploy Prod",
+        "Integration Tests",
+    ]
+    executions = get_detailed_executions(
+        "arn:aws:states:eu-west-1:929368261477:stateMachine:trafficinfo-state-machine",
+        limit=500,
+    )
+    executions = list(filter(lambda e: e["status"] != "RUNNING", executions))
+    executions = list(
+        map(
+            lambda e: {
+                **e,
+                "states": {
+                    state: get_state_events(state, e["events"])
+                    for state in states
+                },
+            },
+            executions,
+        )
+    )
+    executions_grouped_by_day = reduce(
+        lambda acc, curr: {
+            **acc,
+            curr["startDate"].strftime("%Y-%m-%d"): acc.get(
+                curr["startDate"].strftime("%Y-%m-%d"), []
+            )
+            + [curr],
+        },
+        executions,
+        {},
+    )
+    total = {}
+    for day, executions in executions_grouped_by_day.items():
+        metrics = get_metrics(executions)
+        total[day] = metrics
+
+    metrics_grouped_by_state = {}
+    for day, metrics in total.items():
+        for state, metric in metrics.items():
+            state_dict = metrics_grouped_by_state.get(state, {})
+            for metric_name, metric_value in metric.items():
+                v = state_dict.get(
+                    metric_name, {"timeseries": [], "values": []}
+                )
+                v["timeseries"] = v["timeseries"] + [day]
+                v["values"] = v["values"] + [metric_value]
+                state_dict[metric_name] = v
+                metrics_grouped_by_state[state] = state_dict
+    print(total)
+    print(metrics_grouped_by_state)
+    # plt.xkcd()
+    with plt.style.context("ggplot"):
+        for state, metrics in metrics_grouped_by_state.items():
+            fig, ax = plt.subplots(2, 2)
+            fig.suptitle(state)
+            ax[0, 0].set_title(f"Deployment Frequency")
+            ax[0, 0].set_xlabel("Day")
+            ax[0, 0].set_ylabel("Successes")
+            # ax.set_prop_cycle(cycler("linestyle", ["-", "--", ":", "-."]))
+            # ax.set_xticks(rotation=45)
+            # ax[0, 0].set_xticks(ax[0, 0].get_xticks())[::5]
+            ax[0, 0].plot(
+                list(reversed(metrics["success"]["timeseries"])),
+                list(reversed(metrics["success"]["values"])),
+                label=state,
+            )
+            ax[0, 1].set_title(f"Mean Time to Recovery")
+            ax[0, 1].set_xlabel("Day")
+            ax[0, 1].set_ylabel("Minutes")
+            # ax.s1t_prop_cycle(cycler("linestyle", ["-", "--", ":", "-."]))
+            # ax.1et_xticks(rotation=45)
+            # ax[0, 1].set_xticks(ax[0, 0].get_xticks())[::5]
+            ax[0, 1].plot(
+                list(reversed(metrics["mttr"]["timeseries"])),
+                np.array(list(reversed(metrics["mttr"]["values"]))) / 60,
+                label=state,
+            )
+            fig.tight_layout()
+
+            # plt.xkcd()
+            # plt.title(f"{state} - Mean Time to Recovery")
+            # plt.xlabel("Day")
+            # plt.ylabel("Seconds")
+            # plt.xticks(rotation=45)
+            # plt.plot(
+            #    list(reversed(metrics["mttr"]["timeseries"])),
+            #    list(reversed(metrics["mttr"]["values"])),
+            # )
+            # plt.show()
+    plt.show()
+
+
+def get_metrics(executions):
+    """[WIP] Return the metrics for a set of executions"""
+    metrics = {}
+    failed_state = {}
+    for e in sorted(executions, key=lambda e: e["startDate"]):
+        for state_name, state in e["states"].items():
+            state_metrics = metrics.get(state_name, {})
+            if state["success_event"]:
+                if e["startDate"].weekday() < 5:
+                    state_metrics["success_weekday"] = (
+                        state_metrics.get("success_weekday", 0) + 1
+                    )
+                state_metrics["success"] = state_metrics.get("success", 0) + 1
+                if (
+                    failed_state.get(state_name, None)
+                    and failed_state[state_name]["startDate"] < e["startDate"]
+                ):
+                    duration = int(
+                        state["success_event"]["timestamp"].timestamp()
+                    ) - int(
+                        failed_state[state_name]["fail_event"][
+                            "timestamp"
+                        ].timestamp()
+                    )
+                    state_metrics["recovery"] = (
+                        state_metrics.get("recovery", 0) + 1
+                    )
+                    state_metrics["broken"] = (
+                        state_metrics.get("broken", 0) + duration
+                    )
+                    state_metrics["mttr"] = state_metrics.get(
+                        "broken"
+                    ) / state_metrics.get("recovery")
+                    print(
+                        f"Failed state {state_name} in {failed_state[state_name]['executionArn'].split(':')[7]} fixed by {e['executionArn'].split(':')[7]}"
+                    )
+                    failed_state[state_name] = None
+            if state["fail_event"]:
+                if (
+                    not failed_state.get(state_name, None)
+                    or state["fail_event"]["timestamp"].timestamp()
+                    < failed_state.get(state_name)["fail_event"][
+                        "timestamp"
+                    ].timestamp()
+                ):
+                    failed_state[state_name] = {**e, **state}
+                state_metrics["fail"] = state_metrics.get("fail", 0) + 1
+            if state["enter_event"]:
+                state_metrics["enter"] = state_metrics.get("enter", 0) + 1
+            metrics[state_name] = state_metrics
+
+    return metrics
 
 
 def get_state_info(state_name, state_machine_name, events, table):
