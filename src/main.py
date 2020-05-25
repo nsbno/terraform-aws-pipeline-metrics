@@ -441,7 +441,6 @@ def lambda_handler(event, context):
 
     region = os.environ["AWS_REGION"]
     metric_namespace = os.environ["METRIC_NAMESPACE"]
-    metric_dimension = os.environ["METRIC_DIMENSION"]
     state_names = json.loads(os.environ["STATE_NAMES"])
 
     logger.info("Collecting metrics for states '%s'", state_names)
@@ -480,7 +479,6 @@ def lambda_handler(event, context):
                 state["state_name"],
             )
             continue
-        # TODO Report timestamp of the event in question
         dimensions = [
             {"Name": "PipelineName", "Value": state_machine_name},
             {"Name": "StateName", "Value": state["state_name"]},
@@ -507,8 +505,7 @@ def lambda_handler(event, context):
                     "fixed_execution": None,
                     "fixed_at": None,
                 }
-                # TODO: Check if parameter already has been updated after the current execution's end time
-                # ssm_last_modified = p["Parameter"]["LastModifiedDate"]
+                # TODO: Check if state data already has been updated after the current execution's end time
                 set_state_data_in_dynamodb(new_state_data, dynamodb_table)
 
             metric_name = "StateFail"

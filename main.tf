@@ -6,7 +6,6 @@ locals {
   current_region      = data.aws_region.current.name
   state_machine_names = sort([for arn in var.state_machine_arns : split(":", arn)[6]])
   metric_namespace    = "${var.name_prefix}Pipeline"
-  metric_dimension    = "PipelineName"
 }
 
 data "archive_file" "this" {
@@ -45,7 +44,6 @@ resource "aws_lambda_function" "this" {
       DYNAMODB_TABLE   = aws_dynamodb_table.this.name
       STATE_NAMES      = jsonencode(var.state_names)
       METRIC_NAMESPACE = local.metric_namespace
-      METRIC_DIMENSION = local.metric_dimension
     }
   }
   timeout = var.lambda_timeout
