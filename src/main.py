@@ -305,7 +305,8 @@ def lambda_handler(event, context):
                 state["state_name"],
             )
             metric_name = "StateSuccess"
-        else:
+            timestamp = state["exit_event"]["timestamp"]
+        elif state["fail_event"]:
             logger.info(
                 "State '%s' was entered, but did not successfully exit",
                 state["state_name"],
@@ -325,6 +326,7 @@ def lambda_handler(event, context):
                 set_state_data_in_dynamodb(new_state_data, dynamodb_table)
 
             metric_name = "StateFail"
+            timestamp = state["fail_event"]["timestamp"]
             dimensions.append(
                 {
                     "Name": "FailType",
@@ -335,11 +337,17 @@ def lambda_handler(event, context):
                     else "DEFAULT",
                 }
             )
+        else:
+            logger.warn(
+                "State '%s' did not contain success AND exit event, or fail event",
+                state["state_name"],
+            )
+            continue
         metrics.append(
             {
                 "MetricName": metric_name,
                 "Dimensions": dimensions,
-                "Timestamp": state["exit_event"]["timestamp"],
+                "Timestamp": timestamp,
                 "Value": 1,
                 "Unit": "Count",
             }
