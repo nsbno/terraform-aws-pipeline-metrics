@@ -51,6 +51,22 @@ def get_enter_event(state, events):
     )
 
 
+def get_names_of_entered_states(events, only_task_states=True):
+    """Return the names of all states entered during an execution, optionally only including states of type `Task`"""
+    state_names = set(
+        [
+            e["stateEnteredEventDetails"]["name"]
+            for e in events
+            if e.get("stateEnteredEventDetails", False)
+            and (
+                not only_task_states
+                or (only_task_states and e["type"] == "TaskStateEntered")
+            )
+        ]
+    )
+    return state_names
+
+
 def get_fail_event(state, events):
     """Return the event that made a given state fail during an execution"""
     fail_event = next(
@@ -277,6 +293,9 @@ def lambda_handler(event, context):
         executionArn=execution_arn, maxResults=500, reverseOrder=True
     )
     events = response["events"]
+
+    if len(state_names) == 0:
+        state_names = get_names_of_entered_states(events)
 
     detailed_states = [
         get_state_info(state_name, state_machine_name, events, dynamodb_table)

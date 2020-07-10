@@ -42,7 +42,7 @@ resource "aws_lambda_function" "this" {
   environment {
     variables = {
       DYNAMODB_TABLE   = aws_dynamodb_table.this.name
-      STATE_NAMES      = jsonencode(var.state_names)
+      STATE_NAMES      = jsonencode(var.states_to_collect)
       METRIC_NAMESPACE = local.metric_namespace
     }
   }
@@ -141,7 +141,7 @@ resource "aws_cloudwatch_dashboard" "this" {
           }
         }
       ],
-      flatten([for state in var.state_names : [
+      flatten([for state in var.states_to_display : [
         {
           type   = "text"
           x      = 0
