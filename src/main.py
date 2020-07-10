@@ -74,6 +74,15 @@ def get_fail_event(state, events):
             e
             for e in events
             if e["type"].endswith("Failed")
+            and any(
+                key
+                for key in e
+                if key.endswith("FailedEventDetails")
+                and all(
+                    required_key in e[key]
+                    for required_key in ["error", "cause"]
+                )
+            )
             and find_event_by_backtracking(
                 e,
                 events,
