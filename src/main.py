@@ -428,8 +428,18 @@ def lambda_handler(event, context):
                 "State '%s' was entered and successfully exited",
                 state["state_name"],
             )
-            metric_name = "StateSuccess"
-            timestamp = state["exit_event"]["timestamp"]
+            metrics.append(
+                {
+                    "MetricName": "StateSuccess",
+                    "Dimensions": dimensions,
+                    "Timestamp": state["exit_event"]["timestamp"],
+                    "Value": int(
+                        state["exit_event"]["timestamp"].timestamp() * 1000
+                        - state["enter_event"]["timestamp"].timestamp() * 1000
+                    ),
+                    "Unit": "Milliseconds",
+                }
+            )
         elif state["fail_event"]:
             logger.info(
                 "State '%s' was entered, but did not successfully exit",
@@ -449,8 +459,6 @@ def lambda_handler(event, context):
                 # TODO: Check if state data already has been updated after the current execution's end time
                 set_state_data_in_dynamodb(new_state_data, dynamodb_table)
 
-            metric_name = "StateFail"
-            timestamp = state["fail_event"]["timestamp"]
             dimensions.append(
                 {
                     "Name": "FailType",
@@ -461,21 +469,33 @@ def lambda_handler(event, context):
                     else "DEFAULT",
                 }
             )
+            # exit_event may be undefined if the state failed the execution (e.g., `Raise Errors``)
+            metrics.append(
+                {
+                    "MetricName": "StateFail",
+                    "Dimensions": dimensions,
+                    "Timestamp": state["exit_event"]["timestamp"]
+                    if state.get("exit_event")
+                    else state["fail_event"]["timestamp"],
+                    "Value": int(
+                        (
+                            state["exit_event"]["timestamp"].timestamp()
+                            if state.get("exit_event")
+                            else state["fail_event"]["timestamp"].timestamp()
+                        )
+                        * 1000
+                        - state["enter_event"]["timestamp"].timestamp() * 1000
+                    ),
+                    "Unit": "Milliseconds",
+                }
+            )
+
         else:
             logger.warn(
                 "State '%s' did not contain success AND exit event, or fail event",
                 state["state_name"],
             )
             continue
-        metrics.append(
-            {
-                "MetricName": metric_name,
-                "Dimensions": dimensions,
-                "Timestamp": timestamp,
-                "Value": 1,
-                "Unit": "Count",
-            }
-        )
 
         if (
             state["success_event"]
