@@ -450,7 +450,12 @@ def lambda_handler(event, context):
                     **state["state_data"],
                     "failed_execution": execution_arn,
                     "failed_at": int(
-                        state["exit_event"]["timestamp"].timestamp() * 1000
+                        (
+                            state["exit_event"]["timestamp"].timestamp()
+                            if state["exit_event"]
+                            else state["fail_event"]["timestamp"].timestamp()
+                        )
+                        * 1000
                     ),
                     "fixed": False,
                     "fixed_execution": None,
@@ -465,7 +470,12 @@ def lambda_handler(event, context):
                     "state_name": state["state_name"],
                     "failed_execution": execution_arn,
                     "failed_at": int(
-                        state["exit_event"]["timestamp"].timestamp() * 1000
+                        (
+                            state["exit_event"]["timestamp"].timestamp()
+                            if state["exit_event"]
+                            else state["fail_event"]["timestamp"].timestamp()
+                        )
+                        * 1000
                     ),
                     "fixed": False,
                     "fixed_execution": None,
