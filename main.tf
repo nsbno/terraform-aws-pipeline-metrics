@@ -32,6 +32,14 @@ resource "aws_dynamodb_table" "this" {
   tags = var.tags
 }
 
+resource "aws_s3_bucket" "this" {
+  bucket = "${var.name_prefix}-${local.current_account_id}-sfn-executions"
+  versioning {
+    enabled = true
+  }
+  force_destroy = true
+}
+
 resource "aws_lambda_function" "this" {
   function_name    = "${var.name_prefix}-pipeline-metrics"
   handler          = "main.lambda_handler"
@@ -41,6 +49,7 @@ resource "aws_lambda_function" "this" {
   source_code_hash = filebase64sha256(data.archive_file.this.output_path)
   environment {
     variables = {
+      S3_BUCKET        = aws_s3_bucket.this.id
       DYNAMODB_TABLE   = aws_dynamodb_table.this.name
       STATE_NAMES      = jsonencode(var.states_to_collect)
       METRIC_NAMESPACE = local.metric_namespace
@@ -67,6 +76,11 @@ resource "aws_iam_role_policy" "cloudwatch_to_lambda" {
 
 resource "aws_iam_role_policy" "dynamodb_to_lambda" {
   policy = data.aws_iam_policy_document.dynamodb_for_lambda.json
+  role   = aws_iam_role.this.id
+}
+
+resource "aws_iam_role_policy" "s3_to_lambda" {
+  policy = data.aws_iam_policy_document.s3_for_lambda.json
   role   = aws_iam_role.this.id
 }
 

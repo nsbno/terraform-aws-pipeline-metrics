@@ -48,6 +48,14 @@ data "aws_iam_policy_document" "dynamodb_for_lambda" {
   }
 }
 
+data "aws_iam_policy_document" "s3_for_lambda" {
+  statement {
+    effect    = "Allow"
+    actions   = ["s3:Get*", "s3:List*", "s3:Put*"]
+    resources = [aws_s3_bucket.this.arn, "${aws_s3_bucket.this.arn}/*"]
+  }
+}
+
 
 data "aws_iam_policy_document" "logs_for_lambda" {
   statement {
