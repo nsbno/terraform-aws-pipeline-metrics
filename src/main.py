@@ -16,10 +16,22 @@ import json
 import urllib
 import boto3
 import botocore
-from datetime import datetime
+from datetime import datetime, date
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+
+def serialize_date(obj):
+    if isinstance(obj, (date, datetime)):
+        return {"__date__": True, "value": obj.isoformat()}
+    return str(obj)
+
+
+def deserialize_date(dct):
+    if "__date__" in dct:
+        return datetime.fromisoformat(dct["value"])
+    return dct
 
 
 def find_event_by_backtracking(initial_event, events, condition_fn):
@@ -187,6 +199,85 @@ def get_detailed_execution(execution, limit=500, client=None):
     return {**execution, **events}
 
 
+def get_detailed_executions(
+    state_machine_arn,
+    limit=100,
+    statuses=["SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"],
+    client=None,
+):
+    """Returns a list of detailed executions"""
+    if client is None:
+        client = boto3.client("stepfunctions")
+    start = timer()
+    executions = client.list_executions(
+        stateMachineArn=state_machine_arn, maxResults=limit,
+    )["executions"]
+    end = timer()
+    logger.info("Took %s s to list %s executions", end - start, limit)
+    results = []
+    start = timer()
+    with PoolExecutor(max_workers=4) as executor:
+        for res in executor.map(
+            lambda e: get_detailed_execution(e, client=client), executions
+        ):
+            results.append(res)
+    end = timer()
+    logger.info(
+        "Took %s s to get execution history of %s executions in parallel",
+        end - start,
+        limit,
+    )
+    results = list(filter(lambda e: e["status"] in statuses, results))
+    return results
+
+
+def save_execution_data_to_s3(executions, s3_bucket, s3_key):
+    """Save execution data to S3. If the specified file already exists, the new execution data will be added to the existing file"""
+    s3 = boto3.resource("s3")
+    try:
+        obj = s3.Object(s3_bucket, s3_key)
+        obj.load()  # Will fail if file does not exist
+    except botocore.exceptions.ClientError as e:
+        if e.response["Error"]["Code"] == "404":
+            body = "[]"
+            logger.debug("File 's3://%s/%s' does not exist", s3_bucket, s3_key)
+        else:
+            logger.exception(
+                "Something went wrong when trying to download file 's3://%s/%s'",
+                s3_bucket,
+                s3_key,
+            )
+            raise
+    else:
+        body = obj.get()["Body"].read().decode("utf-8")
+    try:
+        saved_executions = json.loads(body, object_hook=deserialize_date)
+    except (TypeError, json.decoder.JSONDecodeError):
+        logger.exception(
+            "Something went wrong when trying to load file content '%s' as JSON",
+            body,
+        )
+        raise
+
+    names_of_saved_executions = list(
+        map(lambda e: e["name"], saved_executions)
+    )
+    new_executions = (
+        list(
+            filter(
+                lambda e: e["name"] not in names_of_saved_executions,
+                executions,
+            )
+        )
+        if len(saved_executions)
+        else []
+    )
+    if len(saved_executions) == 0 or len(new_executions):
+        all_executions = executions + new_executions
+        new_body = json.dumps(all_executions, default=serialize_date)
+        obj.put(Body=new_body)
+
+
 def get_state_events(state_name, events):
     """Return a dictionary of various events for a given state"""
     return {
@@ -282,15 +373,18 @@ def lambda_handler(event, context):
 
     region = os.environ["AWS_REGION"]
     metric_namespace = os.environ["METRIC_NAMESPACE"]
+    s3_bucket = os.environ["S3_BUCKET"]
     state_names = json.loads(os.environ["STATE_NAMES"])
-
-    logger.info("Collecting metrics for states '%s'", state_names)
 
     status = event["detail"]["status"]
     state_machine_arn = event["detail"]["stateMachineArn"]
     execution_arn = event["detail"]["executionArn"]
     timestamp = event["time"]
     state_machine_name = state_machine_arn.split(":")[6]
+    detailed_executions = get_detailed_executions(state_machine_arn)
+    save_execution_data_to_s3(
+        detailed_executions, s3_bucket, f"{state_machine_name}/executions.json"
+    )
 
     dynamodb = boto3.resource("dynamodb")
     dynamodb_table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
@@ -305,6 +399,8 @@ def lambda_handler(event, context):
 
     if len(state_names) == 0:
         state_names = get_names_of_entered_states(events)
+
+    logger.info("Collecting metrics for states '%s'", state_names)
 
     detailed_states = [
         get_state_info(state_name, state_machine_name, events, dynamodb_table)
