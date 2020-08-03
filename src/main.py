@@ -458,6 +458,20 @@ def lambda_handler(event, context):
                 }
                 # TODO: Check if state data already has been updated after the current execution's end time
                 set_state_data_in_dynamodb(new_state_data, dynamodb_table)
+            elif not state["state_data"]:
+                # Initial state data
+                state_data = {
+                    "state_machine_name": state_machine_name,
+                    "state_name": state["state_name"],
+                    "failed_execution": execution_arn,
+                    "failed_at": int(
+                        state["exit_event"]["timestamp"].timestamp() * 1000
+                    ),
+                    "fixed": False,
+                    "fixed_execution": None,
+                    "fixed_at": None,
+                }
+                set_state_data_in_dynamodb(state_data, dynamodb_table)
 
             dimensions.append(
                 {
