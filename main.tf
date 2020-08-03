@@ -133,7 +133,7 @@ resource "aws_cloudwatch_dashboard" "this" {
         width  = 24
         height = 2
         properties = {
-          markdown = "\nLead Time (LT) | Change Failure Rate (CFR) | Deployment Frequency (DF) | Mean Time to Recovery (MTTR)\n----|-----|----|-----\nPipeline execution time for executions that are successful | Percentage of times a given state has failed | Number of times a given state has been successful | Time it takes for a given state to go from failure to success\n"
+          markdown = "\nLead Time (LT) | Change Failure Rate (CFR) | Deployment Frequency (DF) | Mean Time to Recovery (MTTR) | Run Time (RT) \n----|-----|----|-----|-----\nPipeline execution time for executions that are successful | Percentage of times a given state has failed | Number of times a given state has been successful | Time it takes for a given state to go from failure to success | Time it takes for a given state to successfully complete\n"
         }
         },
         {
@@ -174,12 +174,14 @@ resource "aws_cloudwatch_dashboard" "this" {
           height = 3
           properties = {
             metrics = [
-              [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m3", stat = "Sum", visible = false }],
+              [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m3", stat = "SampleCount", visible = false }],
+              [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m2", stat = "Average", visible = false, label = "StateSuccessTime" }],
+              [{ expression = "FLOOR(m2/(60*1000))", label = "(minutes) Run Time", id = "e4" }],
               [{ expression = "m3/(PERIOD(m3)/(3600*24))", id = "e2", label = "(#) Deployment Frequency" }],
               [{ expression = "100*(m4/(m3+m4))", id = "e1", label = "(%) Change Failure Rate" }],
               [{ expression = "FLOOR(m1/(60*1000))", label = "(minutes) Mean Time to Recovery", id = "e3" }],
-              [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "DEFAULT", { label = "Other failures", id = "m4", stat = "Sum", visible = false }],
-              [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "TERRAFORM_LOCK", { label = "Terraform lock failures", id = "m5", stat = "Sum", visible = false }],
+              [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "DEFAULT", { label = "Other failures", id = "m4", stat = "SampleCount", visible = false }],
+              [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "TERRAFORM_LOCK", { label = "Terraform lock failures", id = "m5", stat = "SampleCount", visible = false }],
               [local.metric_namespace, "MeanTimeToRecovery", "PipelineName", each.key, "StateName", state, { id = "m1", label = "MeanTimeToRecovery", visible = false }]
             ]
             view                 = "singleValue"
@@ -198,7 +200,7 @@ resource "aws_cloudwatch_dashboard" "this" {
           height = 6
           properties = {
             metrics = [
-              [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m3", label = "Success" }]
+              [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { stat = "SampleCount", id = "m3", label = "Success" }]
             ]
             view     = "timeSeries"
             stacked  = false
@@ -227,9 +229,9 @@ resource "aws_cloudwatch_dashboard" "this" {
           height = 3
           properties = {
             metrics = [
-              [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m3", label = "(#) Deployment frequency", visible = false }],
+              [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m3", stat = "SampleCount", label = "(#) Deployment frequency", visible = false }],
               [{ expression = "100*(m4/(m3+m4))", id = "e1", label = "Change Failure Rate" }],
-              [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "DEFAULT", { label = "Other failures", id = "m4", visible = false }]
+              [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "DEFAULT", { stat = "SampleCount", label = "Other failures", id = "m4", visible = false }]
             ]
             view     = "timeSeries"
             stacked  = false
