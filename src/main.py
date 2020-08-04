@@ -270,10 +270,10 @@ def save_execution_data_to_s3(executions, s3_bucket, s3_key):
             )
         )
         if len(saved_executions)
-        else []
+        else executions
     )
-    if len(saved_executions) == 0 or len(new_executions):
-        all_executions = executions + new_executions
+    if len(new_executions):
+        all_executions = saved_executions + new_executions
         new_body = json.dumps(all_executions, default=serialize_date)
         obj.put(Body=new_body)
 
