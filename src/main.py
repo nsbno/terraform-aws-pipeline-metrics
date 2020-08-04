@@ -543,45 +543,27 @@ def lambda_handler(event, context):
                 }
                 set_state_data_in_dynamodb(new_state_data, dynamodb_table)
 
-                # Only update MeanTimeToRecovery if previously failed state failed because of Terraform lock
-                failed_execution = get_detailed_execution(
-                    {"executionArn": state["state_data"]["failed_execution"]}
+                metrics.append(
+                    {
+                        "MetricName": "MeanTimeToRecovery",
+                        "Dimensions": [
+                            {
+                                "Name": "PipelineName",
+                                "Value": state_machine_name,
+                            },
+                            {
+                                "Name": "StateName",
+                                "Value": state["state_name"],
+                            },
+                        ],
+                        "Timestamp": state["exit_event"]["timestamp"],
+                        "Value": int(
+                            state["exit_event"]["timestamp"].timestamp() * 1000
+                        )
+                        - state["state_data"]["failed_at"],
+                        "Unit": "Milliseconds",
+                    }
                 )
-                failed_execution_event = get_fail_event(
-                    state["state_name"], failed_execution["events"]
-                )
-                if (
-                    failed_execution_event
-                    and "Terraform acquires a state lock"
-                    in failed_execution_event["failedEventDetails"]["cause"]
-                ):
-                    logger.info(
-                        "Not updating MeanTimeToRecovery for state '%s' as earlier execution failed due to Terraform lock",
-                        state["state_name"],
-                    )
-                else:
-                    metrics.append(
-                        {
-                            "MetricName": "MeanTimeToRecovery",
-                            "Dimensions": [
-                                {
-                                    "Name": "PipelineName",
-                                    "Value": state_machine_name,
-                                },
-                                {
-                                    "Name": "StateName",
-                                    "Value": state["state_name"],
-                                },
-                            ],
-                            "Timestamp": state["exit_event"]["timestamp"],
-                            "Value": int(
-                                state["exit_event"]["timestamp"].timestamp()
-                                * 1000
-                            )
-                            - state["state_data"]["failed_at"],
-                            "Unit": "Milliseconds",
-                        }
-                    )
             else:
                 logger.info(
                     "State '%s' was in a failed state, but the failure occured AFTER the current execution had started, so skipping metric collecting for MeanTimeToRecovery",
