@@ -228,7 +228,7 @@ def get_detailed_executions(
 
 
 def save_execution_data_to_s3(executions, s3_bucket, s3_key):
-    """Save execution data to S3"""
+    """Save Step Function execution data to S3"""
     s3 = boto3.resource("s3")
     try:
         obj = s3.Object(s3_bucket, s3_key)
@@ -245,15 +245,15 @@ def save_execution_data_to_s3(executions, s3_bucket, s3_key):
 
 
 def get_execution_data_from_s3(s3_bucket, s3_key):
-    """Get execution data from S3"""
+    """Return Step Function execution data saved in S3"""
     s3 = boto3.resource("s3")
     try:
         obj = s3.Object(s3_bucket, s3_key)
         obj.load()  # Will fail if file does not exist
     except botocore.exceptions.ClientError as e:
         if e.response["Error"]["Code"] == "404":
-            body = "[]"
             logger.debug("File 's3://%s/%s' does not exist", s3_bucket, s3_key)
+            return []
         else:
             logger.exception(
                 "Something went wrong when trying to download file 's3://%s/%s'",
@@ -261,8 +261,7 @@ def get_execution_data_from_s3(s3_bucket, s3_key):
                 s3_key,
             )
             raise
-    else:
-        body = obj.get()["Body"].read().decode("utf-8")
+    body = obj.get()["Body"].read().decode("utf-8")
     try:
         saved_executions = json.loads(body, object_hook=deserialize_date)
     except (TypeError, json.decoder.JSONDecodeError):
@@ -545,7 +544,7 @@ def lambda_handler(event, context):
         )
         if len(metrics) != len(filtered_metrics):
             logger.info(
-                "Removed %s metrics as they are more than two weeks old",
+                "Removed %s metrics as they were more than two weeks old",
                 len(metrics) - len(filtered_metrics),
             )
 
