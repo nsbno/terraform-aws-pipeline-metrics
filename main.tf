@@ -5,7 +5,7 @@ locals {
   current_account_id  = data.aws_caller_identity.current.account_id
   current_region      = data.aws_region.current.name
   state_machine_names = sort([for arn in var.state_machine_arns : split(":", arn)[6]])
-  metric_namespace    = "${var.name_prefix}Pipeline"
+  metric_namespace    = "${var.name_prefix}-pipeline-metrics"
 }
 
 data "archive_file" "this" {
