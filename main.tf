@@ -91,21 +91,8 @@ resource "aws_iam_role_policy" "step_functions_to_lambda" {
 }
 
 resource "aws_cloudwatch_event_rule" "this" {
-  description   = "Update CloudWatch metrics on Step Functions Execution Status Change"
-  event_pattern = <<EOF
-{
-  "source": [
-    "aws.states"
-  ],
-  "detail-type": [
-    "Step Functions Execution Status Change"
-  ],
-  "detail": {
-    "status": ["SUCCEEDED", "FAILED"],
-    "stateMachineArn": ${jsonencode(var.state_machine_arns)}
-  }
-}
-EOF
+  description      = "Periodically collect metrics"
+  schedule_pattern = "cron(0 11 ? * MON-SUN *)"
 }
 
 resource "aws_cloudwatch_event_target" "this" {

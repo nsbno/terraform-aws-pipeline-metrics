@@ -200,10 +200,7 @@ def get_detailed_execution(execution, limit=500, client=None):
 
 
 def get_detailed_executions(
-    state_machine_arn,
-    limit=100,
-    statuses=["SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"],
-    client=None,
+    state_machine_arn, limit=100, client=None,
 ):
     """Returns a list of detailed executions"""
     if client is None:
@@ -227,12 +224,28 @@ def get_detailed_executions(
         end - start,
         limit,
     )
-    results = list(filter(lambda e: e["status"] in statuses, results))
     return results
 
 
 def save_execution_data_to_s3(executions, s3_bucket, s3_key):
-    """Save execution data to S3. If the specified file already exists, the new execution data will be added to the existing file"""
+    """Save execution data to S3"""
+    s3 = boto3.resource("s3")
+    try:
+        obj = s3.Object(s3_bucket, s3_key)
+    except botocore.exceptions.ClientError:
+        logger.exception(
+            "Something went wrong when trying to download file 's3://%s/%s'",
+            s3_bucket,
+            s3_key,
+        )
+        raise
+
+    body = json.dumps(executions, default=serialize_date)
+    obj.put(Body=body)
+
+
+def get_execution_data_from_s3(s3_bucket, s3_key):
+    """Get execution data from S3"""
     s3 = boto3.resource("s3")
     try:
         obj = s3.Object(s3_bucket, s3_key)
@@ -258,24 +271,7 @@ def save_execution_data_to_s3(executions, s3_bucket, s3_key):
             body,
         )
         raise
-
-    names_of_saved_executions = list(
-        map(lambda e: e["name"], saved_executions)
-    )
-    new_executions = (
-        list(
-            filter(
-                lambda e: e["name"] not in names_of_saved_executions,
-                executions,
-            )
-        )
-        if len(saved_executions)
-        else executions
-    )
-    if len(new_executions):
-        all_executions = saved_executions + new_executions
-        new_body = json.dumps(all_executions, default=serialize_date)
-        obj.put(Body=new_body)
+    return saved_executions
 
 
 def get_state_events(state_name, events):
@@ -368,6 +364,131 @@ def set_state_data_in_dynamodb(state_data, table):
         raise
 
 
+def get_metrics(state_machine_name, executions):
+    # How to know which metrics have already been published?
+    # Can use new_executions?
+    # Only add executions that have succeeded, failed, cancelled or timed out (i.e., finished executions)
+    # Running executions are ignored
+    metrics = []
+    failed_states = {}
+    for e in executions:
+        detailed_states = [
+            {
+                "state_name": state_name,
+                **get_state_events(state_name, e["events"]),
+            }
+            for state_name in get_names_of_entered_states(e["events"])
+        ]
+        metrics.append(
+            {
+                "MetricName": "PipelineSuccess"
+                if e["status"] == "SUCCEEDED"
+                else "PipelineFail",
+                "Timestamp": e["stopDate"],
+                "Dimensions": [
+                    {"Name": "PipelineName", "Value": state_machine_name},
+                ],
+                "Value": int(
+                    e["stopDate"].timestamp() * 1000
+                    - e["startDate"].timestamp() * 1000
+                ),
+                "Unit": "Milliseconds",
+            }
+        )
+        for state in detailed_states:
+            # TODO: Is success_event without exit_event even possible?
+            state_name = state["state_name"]
+            if state["success_event"]:
+                metrics.append(
+                    {
+                        "MetricName": "StateSuccess",
+                        "Timestamp": state["success_event"]["timestamp"],
+                        "Dimensions": [
+                            {
+                                "Name": "PipelineName",
+                                "Value": state_machine_name,
+                            },
+                            {"Name": "StateName", "Value": state_name,},
+                        ],
+                        "Value": int(
+                            state["success_event"]["timestamp"].timestamp()
+                            * 1000
+                            - state["enter_event"]["timestamp"].timestamp()
+                            * 1000
+                        ),
+                        "Unit": "Milliseconds",
+                    }
+                )
+                # Check if recovered from failed state, in which case calculate MTTR
+                if (
+                    failed_states.get(state_name, None)
+                    and failed_states[state_name]["startDate"].timestamp()
+                    < e["startDate"].timestamp()
+                ):
+                    metrics.append(
+                        {
+                            "MetricName": "StateRecovery",
+                            "Dimensions": [
+                                {
+                                    "Name": "PipelineName",
+                                    "Value": state_machine_name,
+                                },
+                                {"Name": "StateName", "Value": state_name,},
+                            ],
+                            "Timestamp": state["fail_event"]["timestamp"],
+                            "Value": int(
+                                state["fail_event"]["timestamp"].timestamp()
+                                * 1000
+                                - failed_states[state_name]["fail_event"][
+                                    "timestamp"
+                                ].timestamp()
+                                * 1000
+                            ),
+                            "Unit": "Milliseconds",
+                        }
+                    )
+                    failed_states[state_name] = None
+
+            if state["fail_event"]:
+                if (
+                    not failed_states.get(state_name, None)
+                    or state["fail_event"]["timestamp"].timestamp()
+                    < failed_states[state_name]["fail_event"][
+                        "timestamp"
+                    ].timestamp()
+                ):
+                    failed_states[state_name] = {**e, **state}
+                metrics.append(
+                    {
+                        "MetricName": "StateFail",
+                        "Dimensions": [
+                            {
+                                "Name": "PipelineName",
+                                "Value": state_machine_name,
+                            },
+                            {"Name": "StateName", "Value": state_name},
+                            {
+                                "Name": "FailType",
+                                "Value": "TERRAFORM_LOCK"
+                                if "Terraform acquires a state lock"
+                                in state["fail_event"]["failedEventDetails"][
+                                    "cause"
+                                ]
+                                else "DEFAULT",
+                            },
+                        ],
+                        "Value": int(
+                            state["fail_event"]["timestamp"].timestamp() * 1000
+                            - state["enter_event"]["timestamp"].timestamp()
+                            * 1000
+                        ),
+                        "Unit": "Milliseconds",
+                    }
+                )
+
+    return metrics
+
+
 def lambda_handler(event, context):
     logger.info("Lambda triggered with event '%s'", event)
 
@@ -375,6 +496,47 @@ def lambda_handler(event, context):
     metric_namespace = os.environ["METRIC_NAMESPACE"]
     s3_bucket = os.environ["S3_BUCKET"]
     state_names = json.loads(os.environ["STATE_NAMES"])
+    state_machine_arns = json.loads(os.environ["STATE_MACHINE_ARNS"])
+    for state_machine_arn in state_machine_arns:
+        metrics = []
+        state_machine_name = state_machine_arn.split(":")[6]
+        s3_key = f"{state_machine_name}/executions.json"
+
+        detailed_executions = get_detailed_executions(
+            state_machine_arn, limit=100
+        )
+        detailed_executions = sorted(
+            detailed_executions, key=lambda e: e["startDate"]
+        )
+        completed_executions = []
+        for e in detailed_executions:
+            if e["status"] == "RUNNING":
+                break
+            completed_executions.append(e)
+        saved_executions = get_execution_data_from_s3(s3_bucket, s3_key)
+        names_of_saved_executions = list(
+            map(lambda e: e["name"], saved_executions)
+        )
+        new_executions = (
+            list(
+                filter(
+                    lambda e: e["name"] not in names_of_saved_executions,
+                    completed_executions,
+                )
+            )
+            if len(saved_executions)
+            else completed_executions
+        )
+
+        metrics = metrics + get_metrics(state_machine_name, new_executions)
+        logger.info(
+            "Found %s new, completed executions and %s metrics for state machine '%s'",
+            len(new_executions),
+            len(metrics),
+            state_machine_name,
+        )
+
+    return
 
     status = event["detail"]["status"]
     state_machine_arn = event["detail"]["stateMachineArn"]
