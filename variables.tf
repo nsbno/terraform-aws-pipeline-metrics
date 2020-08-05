@@ -30,4 +30,9 @@ variable "lambda_timeout" {
   default     = 60
 }
 
+variable "schedule_expression" {
+  description = "The schedule expression (in UTC) to use for the CloudWatch Event Rule that triggers the Lambda."
+  default     = "rate(1 hour)"
+}
+
 

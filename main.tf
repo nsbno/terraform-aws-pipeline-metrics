@@ -91,8 +91,8 @@ resource "aws_iam_role_policy" "step_functions_to_lambda" {
 }
 
 resource "aws_cloudwatch_event_rule" "this" {
-  description         = "Periodically collect metrics"
-  schedule_expression = "cron(0 11 ? * MON-SUN *)"
+  description         = "Invoke the metric Lambda on a schedule"
+  schedule_expression = var.schedule_expression
 }
 
 resource "aws_cloudwatch_event_target" "this" {
