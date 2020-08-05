@@ -170,7 +170,7 @@ resource "aws_cloudwatch_dashboard" "this" {
               [{ expression = "FLOOR(m1/(60*1000))", label = "(minutes) Mean Time to Recovery", id = "e3" }],
               [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "DEFAULT", { label = "Other failures", id = "m4", stat = "SampleCount", visible = false }],
               [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "TERRAFORM_LOCK", { label = "Terraform lock failures", id = "m5", stat = "SampleCount", visible = false }],
-              [local.metric_namespace, "MeanTimeToRecovery", "PipelineName", each.key, "StateName", state, { id = "m1", label = "MeanTimeToRecovery", visible = false }]
+              [local.metric_namespace, "StateRecovery", "PipelineName", each.key, "StateName", state, { id = "m1", label = "StateRecovery", visible = false }]
             ]
             view                 = "singleValue"
             region               = local.current_region
@@ -246,7 +246,7 @@ resource "aws_cloudwatch_dashboard" "this" {
           properties = {
             metrics = [
               [{ expression = "m4/(1000*60)", id = "e1", label = "Mean Time to Recovery" }],
-              [local.metric_namespace, "MeanTimeToRecovery", "PipelineName", each.key, "StateName", state, { id = "m4", visible = false }]
+              [local.metric_namespace, "StateRecovery", "PipelineName", each.key, "StateName", state, { id = "m4", visible = false }]
             ]
             view     = "timeSeries"
             stacked  = false
