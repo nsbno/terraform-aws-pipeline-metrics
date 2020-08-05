@@ -16,7 +16,7 @@ import json
 import urllib
 import boto3
 import botocore
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -498,6 +498,7 @@ def lambda_handler(event, context):
     s3_bucket = os.environ["S3_BUCKET"]
     state_names = json.loads(os.environ["STATE_NAMES"])
     state_machine_arns = json.loads(os.environ["STATE_MACHINE_ARNS"])
+    today = datetime.now()
     for state_machine_arn in state_machine_arns:
         metrics = []
         state_machine_name = state_machine_arn.split(":")[6]
@@ -536,6 +537,18 @@ def lambda_handler(event, context):
             len(metrics),
             state_machine_name,
         )
+        filtered_metrics = list(
+            filter(
+                lambda m: m["Timestamp"] < (today - timedelta(weeks=2)),
+                metrics,
+            )
+        )
+        if len(metrics) != len(filtered_metrics):
+            logger.info(
+                "Removed %s metrics as they are more than two weeks old",
+                len(metrics) - len(filtered_metrics),
+            )
+
 
     return
 
