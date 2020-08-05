@@ -435,9 +435,9 @@ def get_metrics(state_machine_name, executions):
                                 },
                                 {"Name": "StateName", "Value": state_name,},
                             ],
-                            "Timestamp": state["fail_event"]["timestamp"],
+                            "Timestamp": state["success_event"]["timestamp"],
                             "Value": int(
-                                state["fail_event"]["timestamp"].timestamp()
+                                state["success_event"]["timestamp"].timestamp()
                                 * 1000
                                 - failed_states[state_name]["fail_event"][
                                     "timestamp"
