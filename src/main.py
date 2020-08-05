@@ -539,7 +539,7 @@ def lambda_handler(event, context):
         )
         filtered_metrics = list(
             filter(
-                lambda m: m["Timestamp"] < (today - timedelta(weeks=2)),
+                lambda m: m["Timestamp"] > (today - timedelta(weeks=2)),
                 metrics,
             )
         )
