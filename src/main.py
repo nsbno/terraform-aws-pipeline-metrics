@@ -461,6 +461,7 @@ def get_metrics(state_machine_name, executions):
                 metrics.append(
                     {
                         "MetricName": "StateFail",
+                        "Timestamp": state["fail_event"]["timestamp"],
                         "Dimensions": [
                             {
                                 "Name": "PipelineName",
