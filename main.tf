@@ -218,7 +218,7 @@ resource "aws_cloudwatch_dashboard" "this" {
           height = 6
           properties = {
             metrics = [
-              [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { stat = "SampleCount", id = "m3", label = "Success" }]
+              [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { stat = "SampleCount", id = "m3", label = "Deployment Frequency" }]
             ]
             view     = "timeSeries"
             stacked  = false
