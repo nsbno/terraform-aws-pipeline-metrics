@@ -23,12 +23,14 @@ logger.setLevel(logging.INFO)
 
 
 def serialize_date(obj):
+    """Serialize a datetime object to a string in ISO 8601 format"""
     if isinstance(obj, (date, datetime)):
         return {"__date__": True, "value": obj.isoformat()}
     return str(obj)
 
 
 def deserialize_date(dct):
+    """Deserialize a string in ISO 8601 format to a datetime object"""
     if "__date__" in dct:
         return datetime.fromisoformat(dct["value"])
     return dct
@@ -358,10 +360,7 @@ def set_state_data_in_dynamodb(state_data, table):
 
 
 def get_metrics(state_machine_name, executions):
-    # How to know which metrics have already been published?
-    # Can use new_executions?
-    # Only add executions that have succeeded, failed, cancelled or timed out (i.e., finished executions)
-    # Running executions are ignored
+    """Return metrics (formatted as CloudWatch Custom Metrics) based on a list of detailed Step Function executions"""
     metrics = []
     failed_states = {}
     for e in executions:
@@ -441,7 +440,6 @@ def get_metrics(state_machine_name, executions):
                         }
                     )
                     failed_states[state_name] = None
-
             if state["fail_event"]:
                 if (
                     not failed_states.get(state_name, None)
