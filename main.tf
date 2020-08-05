@@ -133,7 +133,7 @@ resource "aws_cloudwatch_dashboard" "this" {
           properties = {
             metrics = [
               [{ expression = "FLOOR(m2/(60*1000))", label = "(minutes) Lead Time", id = "e2" }],
-              [local.metric_namespace, "LeadTime", "PipelineName", each.key, { id = "m2", visible = false }],
+              [local.metric_namespace, "PipelineSuccess", "PipelineName", each.key, { id = "m2", visible = false }],
             ]
             view   = "singleValue"
             region = local.current_region
