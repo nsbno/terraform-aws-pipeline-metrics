@@ -158,7 +158,7 @@ resource "aws_cloudwatch_dashboard" "this" {
           type   = "metric"
           x      = 0
           y      = 0
-          width  = 12
+          width  = 24
           height = 3
           properties = {
             metrics = [
@@ -182,9 +182,39 @@ resource "aws_cloudwatch_dashboard" "this" {
         },
         {
           type   = "metric"
-          x      = 12
+          x      = 0
           y      = 0
-          width  = 12
+          width  = 6
+          height = 6
+          properties = {
+            metrics = [
+              [{ expression = "m4/(1000*60)", id = "e1", label = "Run Time" }],
+              [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m4", visible = false }]
+            ]
+            view     = "timeSeries"
+            stacked  = false
+            region   = local.current_region
+            liveData = true
+            stat     = "Average"
+            period   = 86400
+            title    = "Run Time"
+            yAxis = {
+              left = {
+                showUnits = false
+                min       = 0
+                label     = "Minutes"
+              }
+            }
+            legend = {
+              position = "hidden"
+            }
+          }
+        },
+        {
+          type   = "metric"
+          x      = 6
+          y      = 0
+          width  = 6
           height = 6
           properties = {
             metrics = [
@@ -211,10 +241,10 @@ resource "aws_cloudwatch_dashboard" "this" {
         },
         {
           type   = "metric"
-          x      = 0
+          x      = 12
           y      = 0
           width  = 6
-          height = 3
+          height = 6
           properties = {
             metrics = [
               [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m3", stat = "SampleCount", label = "(#) Deployment frequency", visible = false }],
@@ -235,14 +265,17 @@ resource "aws_cloudwatch_dashboard" "this" {
                 label     = "Percentage"
               }
             }
+            legend = {
+              position = "hidden"
+            }
           }
         },
         {
           type   = "metric"
-          x      = 6
+          x      = 18
           y      = 0
           width  = 6
-          height = 3
+          height = 6
           properties = {
             metrics = [
               [{ expression = "m4/(1000*60)", id = "e1", label = "Mean Time to Recovery" }],
@@ -261,6 +294,9 @@ resource "aws_cloudwatch_dashboard" "this" {
                 min       = 0
                 label     = "Minutes"
               }
+            }
+            legend = {
+              position = "hidden"
             }
           }
         }
