@@ -225,6 +225,12 @@ def get_detailed_executions(
 
 def save_execution_data_to_s3(executions, s3_bucket, s3_key):
     """Save Step Function execution data to S3"""
+    logger.info(
+        "Saving data for %s executions to file 's3://%s/%s'",
+        len(executions),
+        s3_bucket,
+        s3_key,
+    )
     s3 = boto3.resource("s3")
     try:
         obj = s3.Object(s3_bucket, s3_key)
@@ -242,6 +248,11 @@ def save_execution_data_to_s3(executions, s3_bucket, s3_key):
 
 def get_execution_data_from_s3(s3_bucket, s3_key):
     """Return Step Function execution data saved in S3"""
+    logger.info(
+        "Fetching Step Function execution data from file 's3://%s/%s'",
+        s3_bucket,
+        s3_key,
+    )
     s3 = boto3.resource("s3")
     try:
         obj = s3.Object(s3_bucket, s3_key)
@@ -266,6 +277,12 @@ def get_execution_data_from_s3(s3_bucket, s3_key):
             body,
         )
         raise
+    logger.info(
+        "Found data for %s executions in file 's3://%s/%s'",
+        len(saved_executions),
+        s3_bucket,
+        s3_key,
+    )
     return saved_executions
 
 
@@ -361,6 +378,11 @@ def set_state_data_in_dynamodb(state_data, table):
 
 def get_metrics(state_machine_name, executions):
     """Return metrics (formatted as CloudWatch Custom Metrics) based on a list of detailed Step Function executions"""
+    logger.info(
+        "Calculating metrics for %s executions in state machine '%s'",
+        len(executions),
+        state_machine_name,
+    )
     metrics = []
     failed_states = {}
     for e in executions:
@@ -537,10 +559,11 @@ def lambda_handler(event, context):
         )
         if len(metrics) != len(filtered_metrics):
             logger.info(
-                "Removed %s metrics as they were more than two weeks old",
+                "Filtered out %s metrics as they were more than two weeks old",
                 len(metrics) - len(filtered_metrics),
             )
 
+        # Batch the requests due to API limits (max. 20 metrics per API call)
         batch_size = 20
         cloudwatch = boto3.client("cloudwatch")
         for i in range(0, len(filtered_metrics), batch_size):
