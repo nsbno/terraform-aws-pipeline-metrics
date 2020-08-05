@@ -16,7 +16,7 @@ import json
 import urllib
 import boto3
 import botocore
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -498,7 +498,7 @@ def lambda_handler(event, context):
     s3_bucket = os.environ["S3_BUCKET"]
     state_names = json.loads(os.environ["STATE_NAMES"])
     state_machine_arns = json.loads(os.environ["STATE_MACHINE_ARNS"])
-    today = datetime.now()
+    today = datetime.now(timezone.utc)
     for state_machine_arn in state_machine_arns:
         metrics = []
         state_machine_name = state_machine_arn.split(":")[6]
