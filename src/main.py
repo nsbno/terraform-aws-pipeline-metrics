@@ -200,17 +200,11 @@ def get_detailed_execution(execution, limit=500, client=None):
 
 
 def get_detailed_executions(
-    state_machine_arn, limit=100, client=None,
+    executions, client=None,
 ):
-    """Returns a list of detailed executions"""
+    """Return a list of detailed executions"""
     if client is None:
         client = boto3.client("stepfunctions")
-    start = timer()
-    executions = client.list_executions(
-        stateMachineArn=state_machine_arn, maxResults=limit,
-    )["executions"]
-    end = timer()
-    logger.info("Took %s s to list %s executions", end - start, limit)
     results = []
     start = timer()
     with PoolExecutor(max_workers=4) as executor:
@@ -498,17 +492,14 @@ def lambda_handler(event, context):
     state_names = json.loads(os.environ["STATE_NAMES"])
     state_machine_arns = json.loads(os.environ["STATE_MACHINE_ARNS"])
     today = datetime.now(timezone.utc)
+    sfn = boto3.client("stepfunctions")
     for state_machine_arn in state_machine_arns:
-        metrics = []
         state_machine_name = state_machine_arn.split(":")[6]
         s3_key = f"{state_machine_name}/executions.json"
-
-        detailed_executions = get_detailed_executions(
-            state_machine_arn, limit=100
-        )
-        detailed_executions = sorted(
-            detailed_executions, key=lambda e: e["startDate"]
-        )
+        executions = sfn.list_executions(
+            stateMachineArn=state_machine_arn, maxResults=100,
+        )["executions"]
+        executions = sorted(executions, key=lambda e: e["startDate"])
         completed_executions = []
         for e in detailed_executions:
             if e["status"] == "RUNNING":
@@ -529,10 +520,14 @@ def lambda_handler(event, context):
             else completed_executions
         )
 
-        metrics = metrics + get_metrics(state_machine_name, new_executions)
+        detailed_new_executions = get_detailed_executions(
+            new_executions, client=sfn
+        )
+
+        metrics = get_metrics(state_machine_name, detailed_new_executions)
         logger.info(
             "Found %s new, completed executions and %s metrics for state machine '%s'",
-            len(new_executions),
+            len(detailed_new_executions),
             len(metrics),
             state_machine_name,
         )
@@ -556,6 +551,7 @@ def lambda_handler(event, context):
                 Namespace=metric_namespace, MetricData=batch,
             )
         all_executions = sorted(
-            saved_executions + new_executions, key=lambda e: e["startDate"]
+            saved_executions + detailed_new_executions,
+            key=lambda e: e["startDate"],
         )
         save_execution_data_to_s3(all_executions, s3_bucket, s3_key)
