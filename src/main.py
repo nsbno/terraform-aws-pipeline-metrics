@@ -549,6 +549,17 @@ def lambda_handler(event, context):
                 len(metrics) - len(filtered_metrics),
             )
 
+        batch_size = 20
+        cloudwatch = boto3.client("cloudwatch")
+        for i in range(0, len(filtered_metrics), batch_size):
+            batch = filtered_metrics[i : i + batch_size]
+            response = cloudwatch.put_metric_data(
+                Namespace=metric_namespace, MetricData=batch,
+            )
+        all_executions = sorted(
+            saved_executions + new_executions, key=lambda e: e["startDate"]
+        )
+        save_execution_data_to_s3(all_executions, s3_bucket, s3_key)
 
     return
 
