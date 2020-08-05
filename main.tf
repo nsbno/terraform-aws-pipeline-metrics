@@ -119,7 +119,7 @@ resource "aws_cloudwatch_dashboard" "this" {
         x      = 0
         y      = 0
         width  = 24
-        height = 2
+        height = 3
         properties = {
           markdown = "\nLead Time (LT) | Change Failure Rate (CFR) | Deployment Frequency (DF) | Mean Time to Recovery (MTTR) | Run Time (RT) \n----|-----|----|-----|-----\nPipeline execution time for executions that are successful | Percentage of times a given state has failed | Number of times a given state has been successful | Time it takes for a given state to go from failure to success | Time it takes for a given state to successfully complete\n"
         }
@@ -132,7 +132,7 @@ resource "aws_cloudwatch_dashboard" "this" {
           height = 3
           properties = {
             metrics = [
-              [{ expression = "FLOOR(m2/(60*1000))", label = "(minutes) Lead Time", id = "e2" }],
+              [{ expression = "m2/(60*1000)", label = "(minutes) Lead Time", id = "e2" }],
               [local.metric_namespace, "PipelineSuccess", "PipelineName", each.key, { id = "m2", visible = false }],
             ]
             view   = "singleValue"
@@ -164,10 +164,10 @@ resource "aws_cloudwatch_dashboard" "this" {
             metrics = [
               [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m3", stat = "SampleCount", visible = false }],
               [local.metric_namespace, "StateSuccess", "PipelineName", each.key, "StateName", state, { id = "m2", stat = "Average", visible = false, label = "StateSuccessTime" }],
-              [{ expression = "FLOOR(m2/(60*1000))", label = "(minutes) Run Time", id = "e4" }],
+              [{ expression = "m2/(60*1000)", label = "(minutes) Run Time", id = "e4" }],
               [{ expression = "m3/(PERIOD(m3)/(3600*24))", id = "e2", label = "(#) Deployment Frequency" }],
               [{ expression = "100*(m4/(m3+m4))", id = "e1", label = "(%) Change Failure Rate" }],
-              [{ expression = "FLOOR(m1/(60*1000))", label = "(minutes) Mean Time to Recovery", id = "e3" }],
+              [{ expression = "m1/(60*1000)", label = "(minutes) Mean Time to Recovery", id = "e3" }],
               [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "DEFAULT", { label = "Other failures", id = "m4", stat = "SampleCount", visible = false }],
               [local.metric_namespace, "StateFail", "PipelineName", each.key, "StateName", state, "FailType", "TERRAFORM_LOCK", { label = "Terraform lock failures", id = "m5", stat = "SampleCount", visible = false }],
               [local.metric_namespace, "StateRecovery", "PipelineName", each.key, "StateName", state, { id = "m1", label = "StateRecovery", visible = false }]
