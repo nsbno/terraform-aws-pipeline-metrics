@@ -216,7 +216,7 @@ def get_detailed_executions(
     logger.info(
         "Took %s s to get execution history of %s executions in parallel",
         end - start,
-        limit,
+        len(results),
     )
     return results
 
@@ -501,7 +501,7 @@ def lambda_handler(event, context):
         )["executions"]
         executions = sorted(executions, key=lambda e: e["startDate"])
         completed_executions = []
-        for e in detailed_executions:
+        for e in executions:
             if e["status"] == "RUNNING":
                 break
             completed_executions.append(e)
