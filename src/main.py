@@ -563,14 +563,31 @@ def lambda_handler(event, context):
                 len(metrics) - len(filtered_metrics),
             )
 
-        # Batch the requests due to API limits (max. 20 metrics per API call)
-        batch_size = 20
-        cloudwatch = boto3.client("cloudwatch")
-        for i in range(0, len(filtered_metrics), batch_size):
-            batch = filtered_metrics[i : i + batch_size]
-            response = cloudwatch.put_metric_data(
-                Namespace=metric_namespace, MetricData=batch,
-            )
+        if len(filtered_metrics):
+            # TODO: Use get_metric_data to avoid publishing duplicate metrics (metrics with identical `MetricName` and `Timestamp`
+            # Batch the requests due to API limits (max. 20 metrics per API call)
+            batch_size = 20
+            cloudwatch = boto3.client("cloudwatch")
+            for i in range(0, len(filtered_metrics), batch_size):
+                retries = 0
+                batch = filtered_metrics[i : i + batch_size]
+                while True:
+                    try:
+                        response = cloudwatch.put_metric_data(
+                            Namespace=metric_namespace, MetricData=batch,
+                        )
+                        break
+                    except botocore.exceptions.ClientError:
+                        logger.exception(
+                            "Failed to publish metrics batch #%s for state machine '%s'",
+                            (i + 1),
+                            state_machine_name,
+                        )
+                        if retries < 2:
+                            retries += 1
+                            continue
+                        raise
+
         all_executions = sorted(
             saved_executions + detailed_new_executions,
             key=lambda e: e["startDate"],
