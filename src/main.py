@@ -592,4 +592,5 @@ def lambda_handler(event, context):
             saved_executions + detailed_new_executions,
             key=lambda e: e["startDate"],
         )
-        save_execution_data_to_s3(all_executions, s3_bucket, s3_key)
+        if len(detailed_new_executions):
+            save_execution_data_to_s3(all_executions, s3_bucket, s3_key)
