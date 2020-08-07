@@ -33,11 +33,10 @@ resource "aws_dynamodb_table" "this" {
 }
 
 resource "aws_s3_bucket" "this" {
-  bucket = "${var.name_prefix}-${local.current_account_id}-sfn-executions"
+  bucket = "${local.current_account_id}-${var.name_prefix}-sfn-executions"
   versioning {
     enabled = true
   }
-  force_destroy = true
 }
 
 resource "aws_lambda_function" "this" {
