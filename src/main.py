@@ -680,6 +680,8 @@ def lambda_handler(event, context):
                     "Successfully published batch %s of metrics to CloudWatch",
                     i + 1,
                 )
+                # TODO: Add some retry logic to the DynamoDB writes
+                # It is very important that these calls succeed
                 with dynamodb_table.batch_writer() as batch_writer:
                     logger.info(
                         "Saving batch %s of metrics to DynamoDB", i + 1
