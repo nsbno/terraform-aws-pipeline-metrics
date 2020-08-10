@@ -17,6 +17,7 @@ import urllib
 import boto3
 import botocore
 from datetime import datetime, date, timedelta, timezone
+from functools import reduce
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -621,16 +622,37 @@ def lambda_handler(event, context):
             logger.info(
                 "Checking if any of the metrics already exist in DynamoDB"
             )
-            for m in filtered_metrics:
-                response = dynamodb_table.get_item(
-                    Key={
-                        "execution": m["dynamodb_fields"]["hash_key"],
-                        "metric": m["dynamodb_fields"]["range_key"],
-                    },
+            grouped_by_execution = reduce(
+                lambda acc, curr: {
+                    **acc,
+                    curr["dynamodb_fields"]["hash_key"]: acc.get(
+                        curr["dynamodb_fields"]["hash_key"], []
+                    )
+                    + [curr],
+                },
+                filtered_metrics,
+                {},
+            )
+            for execution, execution_metrics in grouped_by_execution.items():
+                response = dynamodb_table.query(
                     ConsistentRead=True,
+                    KeyConditionExpression=boto3.dynamodb.conditions.Key(
+                        "execution"
+                    ).eq(execution),
                 )
-                if not response.get("Item", None):
-                    deduplicated_metrics.append(m)
+                items = (
+                    list(map(lambda item: item["metric"], response["Items"]))
+                    if response.get("Items", [])
+                    else []
+                )
+                deduplicated_metrics += list(
+                    filter(
+                        lambda metric: metric["dynamodb_fields"]["range_key"]
+                        not in items,
+                        execution_metrics,
+                    )
+                )
+
             logger.info(
                 "Found %s duplicate metrics",
                 len(filtered_metrics) - len(deduplicated_metrics),
