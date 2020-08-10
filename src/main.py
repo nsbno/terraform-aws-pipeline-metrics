@@ -408,8 +408,9 @@ def get_metrics(state_machine_name, executions):
                     "Dimensions": [
                         {"Name": "PipelineName", "Value": state_machine_name},
                     ],
-                    "Value": (e["stopDate"] - e["startDate"]).total_seconds()
-                    * 1000,
+                    "Value": int(
+                        (e["stopDate"] - e["startDate"]).total_seconds() * 1000
+                    ),
                     "Unit": "Milliseconds",
                 },
             }
@@ -434,11 +435,13 @@ def get_metrics(state_machine_name, executions):
                                 },
                                 {"Name": "StateName", "Value": state_name,},
                             ],
-                            "Value": (
-                                state["success_event"]["timestamp"]
-                                - state["enter_event"]["timestamp"]
-                            ).total_seconds()
-                            * 1000,
+                            "Value": int(
+                                (
+                                    state["success_event"]["timestamp"]
+                                    - state["enter_event"]["timestamp"]
+                                ).total_seconds()
+                                * 1000
+                            ),
                             "Unit": "Milliseconds",
                         },
                     }
@@ -470,13 +473,15 @@ def get_metrics(state_machine_name, executions):
                                 "Timestamp": state["success_event"][
                                     "timestamp"
                                 ],
-                                "Value": (
-                                    state["success_event"]["timestamp"]
-                                    - failed_states[state_name]["fail_event"][
-                                        "timestamp"
-                                    ]
-                                ).total_seconds()
-                                * 1000,
+                                "Value": int(
+                                    (
+                                        state["success_event"]["timestamp"]
+                                        - failed_states[state_name][
+                                            "fail_event"
+                                        ]["timestamp"]
+                                    ).total_seconds()
+                                    * 1000
+                                ),
                                 "Unit": "Milliseconds",
                             },
                         }
@@ -514,11 +519,13 @@ def get_metrics(state_machine_name, executions):
                                     else "DEFAULT",
                                 },
                             ],
-                            "Value": (
-                                state["fail_event"]["timestamp"]
-                                - state["enter_event"]["timestamp"]
-                            ).total_seconds()
-                            * 1000,
+                            "Value": int(
+                                (
+                                    state["fail_event"]["timestamp"]
+                                    - state["enter_event"]["timestamp"]
+                                ).total_seconds()
+                                * 1000
+                            ),
                             "Unit": "Milliseconds",
                         },
                     }
