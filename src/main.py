@@ -396,13 +396,11 @@ def get_metrics(state_machine_name, executions):
         ]
         metrics.append(
             {
-                "dynamodb_fields": {
-                    "execution_arn": e["executionArn"],
-                    "start_date": int(e["startDate"].timestamp() * 1000),
-                    "hash_key": f'{e["executionArn"]}|{int(e["startDate"].timestamp() * 1000)}',
-                    "range_key": "PipelineSuccess",
-                },
-                "cloudwatch_fields": {
+                "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
+                "metric": "PipelineSuccess",
+                "execution_arn": e["executionArn"],
+                "start_date": e["startDate"].isoformat(),
+                "metric_data": {
                     "MetricName": "PipelineSuccess"
                     if e["status"] == "SUCCEEDED"
                     else "PipelineFail",
@@ -410,10 +408,7 @@ def get_metrics(state_machine_name, executions):
                     "Dimensions": [
                         {"Name": "PipelineName", "Value": state_machine_name},
                     ],
-                    "Value": int(
-                        e["stopDate"].timestamp() * 1000
-                        - e["startDate"].timestamp() * 1000
-                    ),
+                    "Value": int((e["stopDate"] - e["startDate"]) * 1000),
                     "Unit": "Milliseconds",
                 },
             }
@@ -424,15 +419,11 @@ def get_metrics(state_machine_name, executions):
             if state["success_event"]:
                 metrics.append(
                     {
-                        "dynamodb_fields": {
-                            "execution_arn": e["executionArn"],
-                            "start_date": int(
-                                e["startDate"].timestamp() * 1000
-                            ),
-                            "hash_key": f'{e["executionArn"]}|{int(e["startDate"].timestamp() * 1000)}',
-                            "range_key": state_name + "|" + "StateSuccess",
-                        },
-                        "cloudwatch_fields": {
+                        "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
+                        "metric": state_name + "|" + "StateSuccess",
+                        "execution_arn": e["executionArn"],
+                        "start_date": e["startDate"].isoformat(),
+                        "metric_data": {
                             "MetricName": "StateSuccess",
                             "Timestamp": state["success_event"]["timestamp"],
                             "Dimensions": [
@@ -443,9 +434,10 @@ def get_metrics(state_machine_name, executions):
                                 {"Name": "StateName", "Value": state_name,},
                             ],
                             "Value": int(
-                                state["success_event"]["timestamp"].timestamp()
-                                * 1000
-                                - state["enter_event"]["timestamp"].timestamp()
+                                (
+                                    state["success_event"]["timestamp"]
+                                    - state["enter_event"]["timestamp"]
+                                )
                                 * 1000
                             ),
                             "Unit": "Milliseconds",
@@ -460,17 +452,11 @@ def get_metrics(state_machine_name, executions):
                 ):
                     metrics.append(
                         {
-                            "dynamodb_fields": {
-                                "execution_arn": e["executionArn"],
-                                "start_date": int(
-                                    e["startDate"].timestamp() * 1000
-                                ),
-                                "hash_key": f'{e["executionArn"]}|{int(e["startDate"].timestamp() * 1000)}',
-                                "range_key": state_name
-                                + "|"
-                                + "StateRecovery",
-                            },
-                            "cloudwatch_fields": {
+                            "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
+                            "metric": state_name + "|" + "StateRecovery",
+                            "execution_arn": e["executionArn"],
+                            "start_date": e["startDate"].isoformat(),
+                            "metric_data": {
                                 "MetricName": "StateRecovery",
                                 "Dimensions": [
                                     {
@@ -486,13 +472,12 @@ def get_metrics(state_machine_name, executions):
                                     "timestamp"
                                 ],
                                 "Value": int(
-                                    state["success_event"][
-                                        "timestamp"
-                                    ].timestamp()
-                                    * 1000
-                                    - failed_states[state_name]["fail_event"][
-                                        "timestamp"
-                                    ].timestamp()
+                                    (
+                                        state["success_event"]["timestamp"]
+                                        - failed_states[state_name][
+                                            "fail_event"
+                                        ]["timestamp"]
+                                    )
                                     * 1000
                                 ),
                                 "Unit": "Milliseconds",
@@ -503,23 +488,17 @@ def get_metrics(state_machine_name, executions):
             if state["fail_event"]:
                 if (
                     not failed_states.get(state_name, None)
-                    or state["fail_event"]["timestamp"].timestamp()
-                    < failed_states[state_name]["fail_event"][
-                        "timestamp"
-                    ].timestamp()
+                    or state["fail_event"]["timestamp"]
+                    < failed_states[state_name]["fail_event"]["timestamp"]
                 ):
                     failed_states[state_name] = {**e, **state}
                 metrics.append(
                     {
-                        "dynamodb_fields": {
-                            "execution_arn": e["executionArn"],
-                            "start_date": int(
-                                e["startDate"].timestamp() * 1000
-                            ),
-                            "hash_key": f'{e["executionArn"]}|{int(e["startDate"].timestamp() * 1000)}',
-                            "range_key": state_name + "|" + "StateFail",
-                        },
-                        "cloudwatch_fields": {
+                        "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
+                        "metric": state_name + "|" + "StateFail",
+                        "execution_arn": e["executionArn"],
+                        "start_date": e["startDate"].isoformat(),
+                        "metric_data": {
                             "MetricName": "StateFail",
                             "Timestamp": state["fail_event"]["timestamp"],
                             "Dimensions": [
@@ -539,9 +518,10 @@ def get_metrics(state_machine_name, executions):
                                 },
                             ],
                             "Value": int(
-                                state["fail_event"]["timestamp"].timestamp()
-                                * 1000
-                                - state["enter_event"]["timestamp"].timestamp()
+                                (
+                                    state["fail_event"]["timestamp"]
+                                    - state["enter_event"]["timestamp"]
+                                )
                                 * 1000
                             ),
                             "Unit": "Milliseconds",
@@ -606,7 +586,7 @@ def lambda_handler(event, context):
         )
         filtered_metrics = list(
             filter(
-                lambda m: m["cloudwatch_fields"]["Timestamp"]
+                lambda m: m["metric_data"]["Timestamp"]
                 > (today - timedelta(weeks=2)),
                 metrics,
             )
@@ -625,10 +605,7 @@ def lambda_handler(event, context):
             grouped_by_execution = reduce(
                 lambda acc, curr: {
                     **acc,
-                    curr["dynamodb_fields"]["hash_key"]: acc.get(
-                        curr["dynamodb_fields"]["hash_key"], []
-                    )
-                    + [curr],
+                    curr["execution"]: acc.get(curr["execution"], []) + [curr],
                 },
                 filtered_metrics,
                 {},
@@ -645,16 +622,14 @@ def lambda_handler(event, context):
                     if response.get("Items", [])
                     else []
                 )
-                logger.info(
+                logger.debug(
                     "Found %s items in DynamoDB with hash key '%s' %s",
                     len(items),
                     execution,
-                    json.dumps(items),
                 )
                 deduplicated_metrics += list(
                     filter(
-                        lambda metric: metric["dynamodb_fields"]["range_key"]
-                        not in items,
+                        lambda metric: metric["metric"] not in items,
                         execution_metrics,
                     )
                 )
@@ -675,7 +650,7 @@ def lambda_handler(event, context):
                         response = cloudwatch.put_metric_data(
                             Namespace=metric_namespace,
                             MetricData=list(
-                                map(lambda m: m["cloudwatch_fields"], batch)
+                                map(lambda m: m["metric_data"], batch)
                             ),
                         )
                         break
@@ -700,12 +675,16 @@ def lambda_handler(event, context):
                     )
                     for m in batch:
                         # Any side effects from doing a mutation here?
-                        m["cloudwatch_fields"]["Timestamp"] = m[
-                            "cloudwatch_fields"
-                        ]["Timestamp"].isoformat()
+                        time_to_live = (
+                            m["metric_data"]["Timestamp"] + timedelta(days=15)
+                        ).isoformat()
+                        m["metric_data"]["Timestamp"] = m["metric_data"][
+                            "Timestamp"
+                        ].isoformat()
                         item = {
                             "execution": m["dynamodb_fields"]["hash_key"],
                             "metric": m["dynamodb_fields"]["range_key"],
+                            "time_to_live": time_to_live,
                             **m,
                         }
                         batch_writer.put_item(Item=item)

@@ -47,6 +47,10 @@ resource "aws_dynamodb_table" "metrics" {
     name = "metric"
     type = "S"
   }
+  ttl {
+    enabled        = true
+    attribute_name = "time_to_live"
+  }
   tags = var.tags
 }
 
