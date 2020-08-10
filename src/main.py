@@ -395,18 +395,26 @@ def get_metrics(state_machine_name, executions):
         ]
         metrics.append(
             {
-                "MetricName": "PipelineSuccess"
-                if e["status"] == "SUCCEEDED"
-                else "PipelineFail",
-                "Timestamp": e["stopDate"],
-                "Dimensions": [
-                    {"Name": "PipelineName", "Value": state_machine_name},
-                ],
-                "Value": int(
-                    e["stopDate"].timestamp() * 1000
-                    - e["startDate"].timestamp() * 1000
-                ),
-                "Unit": "Milliseconds",
+                "dynamodb_fields": {
+                    "execution_arn": e["executionArn"],
+                    "start_date": e["startDate"],
+                    "hash_key": e["executionArn"] + "|" + e["startDate"],
+                    "range_key": "PipelineSuccess",
+                },
+                "cloudwatch_fields": {
+                    "MetricName": "PipelineSuccess"
+                    if e["status"] == "SUCCEEDED"
+                    else "PipelineFail",
+                    "Timestamp": e["stopDate"],
+                    "Dimensions": [
+                        {"Name": "PipelineName", "Value": state_machine_name},
+                    ],
+                    "Value": int(
+                        e["stopDate"].timestamp() * 1000
+                        - e["startDate"].timestamp() * 1000
+                    ),
+                    "Unit": "Milliseconds",
+                },
             }
         )
         for state in detailed_states:
@@ -415,22 +423,32 @@ def get_metrics(state_machine_name, executions):
             if state["success_event"]:
                 metrics.append(
                     {
-                        "MetricName": "StateSuccess",
-                        "Timestamp": state["success_event"]["timestamp"],
-                        "Dimensions": [
-                            {
-                                "Name": "PipelineName",
-                                "Value": state_machine_name,
-                            },
-                            {"Name": "StateName", "Value": state_name,},
-                        ],
-                        "Value": int(
-                            state["success_event"]["timestamp"].timestamp()
-                            * 1000
-                            - state["enter_event"]["timestamp"].timestamp()
-                            * 1000
-                        ),
-                        "Unit": "Milliseconds",
+                        "dynamodb_fields": {
+                            "execution_arn": e["executionArn"],
+                            "start_date": e["startDate"],
+                            "hash_key": e["executionArn"]
+                            + "|"
+                            + e["startDate"],
+                            "range_key": state_name + "|" + "StateSuccess",
+                        },
+                        "cloudwatch_fields": {
+                            "MetricName": "StateSuccess",
+                            "Timestamp": state["success_event"]["timestamp"],
+                            "Dimensions": [
+                                {
+                                    "Name": "PipelineName",
+                                    "Value": state_machine_name,
+                                },
+                                {"Name": "StateName", "Value": state_name,},
+                            ],
+                            "Value": int(
+                                state["success_event"]["timestamp"].timestamp()
+                                * 1000
+                                - state["enter_event"]["timestamp"].timestamp()
+                                * 1000
+                            ),
+                            "Unit": "Milliseconds",
+                        },
                     }
                 )
                 # Check if recovered from failed state, in which case calculate MTTR
@@ -441,24 +459,43 @@ def get_metrics(state_machine_name, executions):
                 ):
                     metrics.append(
                         {
-                            "MetricName": "StateRecovery",
-                            "Dimensions": [
-                                {
-                                    "Name": "PipelineName",
-                                    "Value": state_machine_name,
-                                },
-                                {"Name": "StateName", "Value": state_name,},
-                            ],
-                            "Timestamp": state["success_event"]["timestamp"],
-                            "Value": int(
-                                state["success_event"]["timestamp"].timestamp()
-                                * 1000
-                                - failed_states[state_name]["fail_event"][
+                            "dynamodb_fields": {
+                                "execution_arn": e["executionArn"],
+                                "start_date": e["startDate"],
+                                "hash_key": e["executionArn"]
+                                + "|"
+                                + e["startDate"],
+                                "range_key": state_name
+                                + "|"
+                                + "StateRecovery",
+                            },
+                            "cloudwatch_fields": {
+                                "MetricName": "StateRecovery",
+                                "Dimensions": [
+                                    {
+                                        "Name": "PipelineName",
+                                        "Value": state_machine_name,
+                                    },
+                                    {
+                                        "Name": "StateName",
+                                        "Value": state_name,
+                                    },
+                                ],
+                                "Timestamp": state["success_event"][
                                     "timestamp"
-                                ].timestamp()
-                                * 1000
-                            ),
-                            "Unit": "Milliseconds",
+                                ],
+                                "Value": int(
+                                    state["success_event"][
+                                        "timestamp"
+                                    ].timestamp()
+                                    * 1000
+                                    - failed_states[state_name]["fail_event"][
+                                        "timestamp"
+                                    ].timestamp()
+                                    * 1000
+                                ),
+                                "Unit": "Milliseconds",
+                            },
                         }
                     )
                     failed_states[state_name] = None
@@ -473,30 +510,41 @@ def get_metrics(state_machine_name, executions):
                     failed_states[state_name] = {**e, **state}
                 metrics.append(
                     {
-                        "MetricName": "StateFail",
-                        "Timestamp": state["fail_event"]["timestamp"],
-                        "Dimensions": [
-                            {
-                                "Name": "PipelineName",
-                                "Value": state_machine_name,
-                            },
-                            {"Name": "StateName", "Value": state_name},
-                            {
-                                "Name": "FailType",
-                                "Value": "TERRAFORM_LOCK"
-                                if "Terraform acquires a state lock"
-                                in state["fail_event"]["failedEventDetails"][
-                                    "cause"
-                                ]
-                                else "DEFAULT",
-                            },
-                        ],
-                        "Value": int(
-                            state["fail_event"]["timestamp"].timestamp() * 1000
-                            - state["enter_event"]["timestamp"].timestamp()
-                            * 1000
-                        ),
-                        "Unit": "Milliseconds",
+                        "dynamodb_fields": {
+                            "execution_arn": e["executionArn"],
+                            "start_date": e["startDate"],
+                            "hash_key": e["executionArn"]
+                            + "|"
+                            + e["startDate"],
+                            "range_key": state_name + "|" + "StateFail",
+                        },
+                        "cloudwatch_fields": {
+                            "MetricName": "StateFail",
+                            "Timestamp": state["fail_event"]["timestamp"],
+                            "Dimensions": [
+                                {
+                                    "Name": "PipelineName",
+                                    "Value": state_machine_name,
+                                },
+                                {"Name": "StateName", "Value": state_name},
+                                {
+                                    "Name": "FailType",
+                                    "Value": "TERRAFORM_LOCK"
+                                    if "Terraform acquires a state lock"
+                                    in state["fail_event"][
+                                        "failedEventDetails"
+                                    ]["cause"]
+                                    else "DEFAULT",
+                                },
+                            ],
+                            "Value": int(
+                                state["fail_event"]["timestamp"].timestamp()
+                                * 1000
+                                - state["enter_event"]["timestamp"].timestamp()
+                                * 1000
+                            ),
+                            "Unit": "Milliseconds",
+                        },
                     }
                 )
 
@@ -513,6 +561,10 @@ def lambda_handler(event, context):
     state_machine_arns = json.loads(os.environ["STATE_MACHINE_ARNS"])
     today = datetime.now(timezone.utc)
     sfn = boto3.client("stepfunctions")
+
+    dynamodb = boto3.resource("dynamodb")
+    dynamodb_table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+
     for state_machine_arn in state_machine_arns:
         state_machine_name = state_machine_arn.split(":")[6]
         s3_key = f"{state_machine_name}/executions.json"
@@ -553,7 +605,8 @@ def lambda_handler(event, context):
         )
         filtered_metrics = list(
             filter(
-                lambda m: m["Timestamp"] > (today - timedelta(weeks=2)),
+                lambda m: m["cloudwatch_fields"]["Timestamp"]
+                > (today - timedelta(weeks=2)),
                 metrics,
             )
         )
@@ -564,17 +617,38 @@ def lambda_handler(event, context):
             )
 
         if len(filtered_metrics):
-            # TODO: Use get_metric_data to avoid publishing duplicate metrics (metrics with identical `MetricName` and `Timestamp`
+            deduplicated_metrics = []
+            logger.info(
+                "Checking if any of the metrics already exist in DynamoDB"
+            )
+            for m in filtered_metrics:
+                response = dynamodb_table.get_item(
+                    Key={
+                        "execution": m["dynamodb_fields"]["hash_key"],
+                        "metric": m["dynamodb_fields"]["range_key"],
+                    },
+                    ConsistentRead=True,
+                )
+                if not response.get("Item", None):
+                    deduplicated_metrics.append(m)
+            logger.info(
+                "Found %s duplicate metrics",
+                len(filtered_metrics) - len(deduplicated_metrics),
+            )
+
             # Batch the requests due to API limits (max. 20 metrics per API call)
             batch_size = 20
             cloudwatch = boto3.client("cloudwatch")
-            for i in range(0, len(filtered_metrics), batch_size):
+            for i in range(0, len(deduplicated_metrics), batch_size):
                 retries = 0
                 batch = filtered_metrics[i : i + batch_size]
                 while True:
                     try:
                         response = cloudwatch.put_metric_data(
-                            Namespace=metric_namespace, MetricData=batch,
+                            Namespace=metric_namespace,
+                            MetricData=list(
+                                map(lambda m: m["cloudwatch_fields"], batch)
+                            ),
                         )
                         break
                     except botocore.exceptions.ClientError:
@@ -587,6 +661,22 @@ def lambda_handler(event, context):
                             retries += 1
                             continue
                         raise
+
+                logger.info(
+                    "Successfully published batch %s of metrics to CloudWatch",
+                    i + 1,
+                )
+                with dynamodb_table.batch_writer() as batch_writer:
+                    logger.info(
+                        "Saving batch %s of metrics to DynamoDB", i + 1
+                    )
+                    for m in batch:
+                        item = {
+                            "execution": m["dynamodb_fields"]["hash_key"],
+                            "metric": m["dynamodb_fields"]["range_key"],
+                            **m,
+                        }
+                        batch_writer.put_item(Item=item)
 
         all_executions = sorted(
             saved_executions + detailed_new_executions,
