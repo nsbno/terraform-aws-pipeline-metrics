@@ -114,7 +114,7 @@ def get_fail_event(state, events):
     if fail_event:
         # Different state types use different names for storing details about the failed event
         # taskFailedEventDetails, activityFailedEventDetails, etc.
-        logger.info("State '%s failed in event '%s'", state, fail_event)
+        logger.debug("State '%s failed in event '%s'", state, fail_event)
         fail_event_details_key = next(
             (
                 key
@@ -644,6 +644,12 @@ def lambda_handler(event, context):
                     list(map(lambda item: item["metric"], response["Items"]))
                     if response.get("Items", [])
                     else []
+                )
+                logger.info(
+                    "Found %s items in DynamoDB with hash key '%s' %s",
+                    len(items),
+                    execution,
+                    json.dumps(items),
                 )
                 deduplicated_metrics += list(
                     filter(
