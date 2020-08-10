@@ -669,7 +669,7 @@ def lambda_handler(event, context):
             cloudwatch = boto3.client("cloudwatch")
             for i in range(0, len(deduplicated_metrics), batch_size):
                 retries = 0
-                batch = filtered_metrics[i : i + batch_size]
+                batch = deduplicated_metrics[i : i + batch_size]
                 while True:
                     try:
                         response = cloudwatch.put_metric_data(
