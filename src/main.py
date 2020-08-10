@@ -619,11 +619,20 @@ def lambda_handler(event, context):
                         "execution"
                     ).eq(execution),
                 )
-                items = (
-                    list(map(lambda item: item["metric"], response["Items"]))
-                    if response.get("Items", [])
-                    else []
+                items = list(
+                    map(lambda item: item["metric"], response["Items"])
                 )
+                while response.get("LastEvaluatedKey", None):
+                    response = dynamodb_table.query(
+                        ExclusiveStartKey=response["LastEvaluatedKey"],
+                        ConsistentRead=True,
+                        KeyConditionExpression=boto3.dynamodb.conditions.Key(
+                            "execution"
+                        ).eq(execution),
+                    )
+                    items += list(
+                        map(lambda item: item["metric"], response["Items"])
+                    )
                 logger.debug(
                     "Found %s items in DynamoDB with hash key '%s' %s",
                     len(items),
