@@ -677,8 +677,6 @@ def lambda_handler(event, context):
                             "Timestamp"
                         ].isoformat()
                         item = {
-                            "execution": m["dynamodb_fields"]["hash_key"],
-                            "metric": m["dynamodb_fields"]["range_key"],
                             "time_to_live": time_to_live,
                             **m,
                         }
