@@ -397,8 +397,8 @@ def get_metrics(state_machine_name, executions):
             {
                 "dynamodb_fields": {
                     "execution_arn": e["executionArn"],
-                    "start_date": e["startDate"],
-                    "hash_key": e["executionArn"] + "|" + e["startDate"],
+                    "start_date": int(e["startDate"].timestamp() * 1000),
+                    "hash_key": f'{e["executionArn"]}|{int(e["startDate"].timestamp() * 1000)}',
                     "range_key": "PipelineSuccess",
                 },
                 "cloudwatch_fields": {
@@ -425,10 +425,10 @@ def get_metrics(state_machine_name, executions):
                     {
                         "dynamodb_fields": {
                             "execution_arn": e["executionArn"],
-                            "start_date": e["startDate"],
-                            "hash_key": e["executionArn"]
-                            + "|"
-                            + e["startDate"],
+                            "start_date": int(
+                                e["startDate"].timestamp() * 1000
+                            ),
+                            "hash_key": f'{e["executionArn"]}|{int(e["startDate"].timestamp() * 1000)}',
                             "range_key": state_name + "|" + "StateSuccess",
                         },
                         "cloudwatch_fields": {
@@ -461,10 +461,10 @@ def get_metrics(state_machine_name, executions):
                         {
                             "dynamodb_fields": {
                                 "execution_arn": e["executionArn"],
-                                "start_date": e["startDate"],
-                                "hash_key": e["executionArn"]
-                                + "|"
-                                + e["startDate"],
+                                "start_date": int(
+                                    e["startDate"].timestamp() * 1000
+                                ),
+                                "hash_key": f'{e["executionArn"]}|{int(e["startDate"].timestamp() * 1000)}',
                                 "range_key": state_name
                                 + "|"
                                 + "StateRecovery",
@@ -512,10 +512,10 @@ def get_metrics(state_machine_name, executions):
                     {
                         "dynamodb_fields": {
                             "execution_arn": e["executionArn"],
-                            "start_date": e["startDate"],
-                            "hash_key": e["executionArn"]
-                            + "|"
-                            + e["startDate"],
+                            "start_date": int(
+                                e["startDate"].timestamp() * 1000
+                            ),
+                            "hash_key": f'{e["executionArn"]}|{int(e["startDate"].timestamp() * 1000)}',
                             "range_key": state_name + "|" + "StateFail",
                         },
                         "cloudwatch_fields": {
@@ -671,6 +671,10 @@ def lambda_handler(event, context):
                         "Saving batch %s of metrics to DynamoDB", i + 1
                     )
                     for m in batch:
+                        # Any side effects from doing a mutation here?
+                        m["cloudwatch_fields"]["Timestamp"] = m[
+                            "cloudwatch_fields"
+                        ]["Timestamp"].isoformat()
                         item = {
                             "execution": m["dynamodb_fields"]["hash_key"],
                             "metric": m["dynamodb_fields"]["range_key"],
