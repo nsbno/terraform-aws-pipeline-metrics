@@ -32,6 +32,24 @@ resource "aws_dynamodb_table" "this" {
   tags = var.tags
 }
 
+resource "aws_dynamodb_table" "metrics" {
+  name         = "${var.name_prefix}-pipeline-metrics"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "execution"
+  range_key    = "metric"
+
+  attribute {
+    name = "execution"
+    type = "S"
+  }
+
+  attribute {
+    name = "metric"
+    type = "S"
+  }
+  tags = var.tags
+}
+
 resource "aws_s3_bucket" "this" {
   bucket = "${local.current_account_id}-${var.name_prefix}-sfn-executions"
   versioning {
@@ -49,7 +67,7 @@ resource "aws_lambda_function" "this" {
   environment {
     variables = {
       S3_BUCKET          = aws_s3_bucket.this.id
-      DYNAMODB_TABLE     = aws_dynamodb_table.this.name
+      DYNAMODB_TABLE     = aws_dynamodb_table.metrics.name
       STATE_NAMES        = jsonencode(var.states_to_collect)
       STATE_MACHINE_ARNS = jsonencode(var.state_machine_arns)
       METRIC_NAMESPACE   = local.metric_namespace

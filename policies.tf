@@ -44,7 +44,7 @@ data "aws_iam_policy_document" "dynamodb_for_lambda" {
       "dynamodb:PutItem",
       "dynamodb:UpdateItem"
     ]
-    resources = [aws_dynamodb_table.this.arn]
+    resources = [aws_dynamodb_table.metrics.arn]
   }
 }
 
