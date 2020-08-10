@@ -59,6 +59,7 @@ resource "aws_s3_bucket" "this" {
   versioning {
     enabled = true
   }
+  tags = var.tags
 }
 
 resource "aws_lambda_function" "this" {
