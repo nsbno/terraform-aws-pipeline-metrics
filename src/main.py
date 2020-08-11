@@ -503,6 +503,7 @@ def get_deduplicated_metrics(metrics, dynamodb_table):
 
 
 def save_processed_executions_to_s3(executions, s3_bucket, s3_prefix):
+    """Save a list of executions to S3 -- one file per execution"""
     s3 = boto3.resource("s3")
     logger.info(
         "Saving %s newly processed executions in S3 bucket '%s' under prefix '%s'",
