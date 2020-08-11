@@ -534,6 +534,53 @@ def get_metrics(state_machine_name, executions):
     return metrics
 
 
+def get_deduplicated_metrics(metrics, dynamodb_table):
+    """Returns a list of metrics that did not already exist in DynamoDB"""
+    deduplicated_metrics = []
+    logger.info("Checking if any of the metrics already exist in DynamoDB")
+    grouped_by_execution = reduce(
+        lambda acc, curr: {
+            **acc,
+            curr["execution"]: acc.get(curr["execution"], []) + [curr],
+        },
+        filtered_metrics,
+        {},
+    )
+    for execution, execution_metrics in grouped_by_execution.items():
+        response = dynamodb_table.query(
+            ConsistentRead=True,
+            KeyConditionExpression=boto3.dynamodb.conditions.Key(
+                "execution"
+            ).eq(execution),
+        )
+        items = list(map(lambda item: item["metric"], response["Items"]))
+        while response.get("LastEvaluatedKey", None):
+            response = dynamodb_table.query(
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+                ConsistentRead=True,
+                KeyConditionExpression=boto3.dynamodb.conditions.Key(
+                    "execution"
+                ).eq(execution),
+            )
+            items += list(map(lambda item: item["metric"], response["Items"]))
+        logger.debug(
+            "Found %s items in DynamoDB with hash key '%s' %s",
+            len(items),
+            execution,
+        )
+        deduplicated_metrics += list(
+            filter(
+                lambda metric: metric["metric"] not in items,
+                execution_metrics,
+            )
+        )
+
+    logger.info(
+        "Found %s duplicate metrics", len(metrics) - len(deduplicated_metrics),
+    )
+    return deduplicated_metrics
+
+
 def lambda_handler(event, context):
     logger.info("Lambda triggered with event '%s'", event)
 
@@ -603,54 +650,8 @@ def lambda_handler(event, context):
             )
 
         if len(filtered_metrics):
-            deduplicated_metrics = []
-            logger.info(
-                "Checking if any of the metrics already exist in DynamoDB"
-            )
-            grouped_by_execution = reduce(
-                lambda acc, curr: {
-                    **acc,
-                    curr["execution"]: acc.get(curr["execution"], []) + [curr],
-                },
-                filtered_metrics,
-                {},
-            )
-            for execution, execution_metrics in grouped_by_execution.items():
-                response = dynamodb_table.query(
-                    ConsistentRead=True,
-                    KeyConditionExpression=boto3.dynamodb.conditions.Key(
-                        "execution"
-                    ).eq(execution),
-                )
-                items = list(
-                    map(lambda item: item["metric"], response["Items"])
-                )
-                while response.get("LastEvaluatedKey", None):
-                    response = dynamodb_table.query(
-                        ExclusiveStartKey=response["LastEvaluatedKey"],
-                        ConsistentRead=True,
-                        KeyConditionExpression=boto3.dynamodb.conditions.Key(
-                            "execution"
-                        ).eq(execution),
-                    )
-                    items += list(
-                        map(lambda item: item["metric"], response["Items"])
-                    )
-                logger.debug(
-                    "Found %s items in DynamoDB with hash key '%s' %s",
-                    len(items),
-                    execution,
-                )
-                deduplicated_metrics += list(
-                    filter(
-                        lambda metric: metric["metric"] not in items,
-                        execution_metrics,
-                    )
-                )
-
-            logger.info(
-                "Found %s duplicate metrics",
-                len(filtered_metrics) - len(deduplicated_metrics),
+            deduplicated_metrics = get_deduplicated_metrics(
+                filtered_metrics, dynamodb_table
             )
 
             # Batch the requests due to API limits (max. 20 metrics per API call)
