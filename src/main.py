@@ -629,17 +629,20 @@ def lambda_handler(event, context):
                                 batch_number,
                             )
                             for m in batch:
-                                # Any side effects from doing a mutation here?
                                 time_to_live = (
                                     m["metric_data"]["Timestamp"]
                                     + timedelta(days=15)
                                 ).isoformat()
-                                m["metric_data"]["Timestamp"] = m[
-                                    "metric_data"
-                                ]["Timestamp"].isoformat()
+                                timestamp = m["metric_data"][
+                                    "Timestamp"
+                                ].isoformat()
                                 item = {
-                                    "time_to_live": time_to_live,
                                     **m,
+                                    "time_to_live": time_to_live,
+                                    "metric_data": {
+                                        **m["metric_data"],
+                                        "Timestamp": timestamp,
+                                    },
                                 }
                                 batch_writer.put_item(Item=item)
                         break
