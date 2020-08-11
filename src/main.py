@@ -612,12 +612,16 @@ def lambda_handler(event, context):
             completed_executions.append(e)
         saved_executions = get_execution_data_from_s3(s3_bucket, s3_key)
         names_of_saved_executions = list(
-            map(lambda e: e["name"], saved_executions)
+            map(
+                lambda e: f'{e["name"]}|{e["startDate"].isoformat()}',
+                saved_executions,
+            )
         )
         new_executions = (
             list(
                 filter(
-                    lambda e: e["name"] not in names_of_saved_executions,
+                    lambda e: f'{e["name"]}|{e["startDate"].isoformat()}'
+                    not in names_of_saved_executions,
                     completed_executions,
                 )
             )
