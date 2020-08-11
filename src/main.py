@@ -11,6 +11,7 @@ AWS Step Functions state machines.
 from concurrent.futures import ThreadPoolExecutor as PoolExecutor
 from timeit import default_timer as timer
 import decimal
+import io
 import os
 import logging
 import json
@@ -512,8 +513,8 @@ def get_deduplicated_metrics(metrics, dynamodb_table):
     return deduplicated_metrics
 
 
-def save_unprocessed_executions_to_s3(executions, s3_bucket, s3_prefix):
-    s3 = boto3.resource("s3")
+def save_processed_executions_to_s3(executions, s3_bucket, s3_prefix):
+    s3 = boto3.client("s3")
     logger.info(
         "Saving %s newly processed executions in S3 bucket '%s' under prefix '%s'",
         len(executions),
@@ -522,18 +523,18 @@ def save_unprocessed_executions_to_s3(executions, s3_bucket, s3_prefix):
     )
     for execution in executions:
         s3_key = f'{s3_prefix}/{execution["name"]}_{execution["startDate"].isoformat()}.json'.lower()
+        content = json.dumps(execution, default=serialize_date)
+        encoded = content.encode()
+        buffer = io.BytesIO(encoded)
         try:
-            obj = s3.Object(s3_bucket, s3_key)
+            s3.upload_fileobj(buffer, s3_bucket, s3_key)
         except botocore.exceptions.ClientError:
             logger.exception(
-                "Something went wrong when trying to load file 's3://%s/%s'",
+                "Something went wrong when trying to upload file 's3://%s/%s'",
                 s3_bucket,
                 s3_key,
             )
             raise
-
-        body = json.dumps(execution, default=serialize_date)
-        obj.put(Body=body)
 
 
 def get_unprocessed_executions(executions, s3_bucket, s3_prefix):
@@ -715,7 +716,7 @@ def lambda_handler(event, context):
                             continue
 
         if len(detailed_new_executions):
-            save_unprocessed_executions_to_s3(
+            save_processed_executions_to_s3(
                 detailed_new_executions, s3_bucket, s3_prefix
             )
         logger.info(
