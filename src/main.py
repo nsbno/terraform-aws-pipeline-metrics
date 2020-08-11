@@ -506,7 +506,7 @@ def get_deduplicated_metrics(metrics, dynamodb_table):
             )
         )
 
-    logger.info(
+    logger.debug(
         "Found %s duplicate metrics", len(metrics) - len(deduplicated_metrics),
     )
     return deduplicated_metrics
@@ -587,6 +587,11 @@ def lambda_handler(event, context):
             deduplicated_metrics = get_deduplicated_metrics(
                 filtered_metrics, dynamodb_table
             )
+            logger.info(
+                "%s metrics will be published to CloudWatch for state machine '%s'",
+                len(deduplicated_metrics),
+                state_machine_name,
+            )
 
             # Batch the requests due to API limits (max. 20 metrics per API call)
             batch_size = 20
@@ -615,7 +620,7 @@ def lambda_handler(event, context):
                             continue
                         raise
 
-                logger.info(
+                logger.debug(
                     "Successfully published batch #%s of metrics to CloudWatch",
                     batch_number,
                 )
@@ -624,7 +629,7 @@ def lambda_handler(event, context):
                 while True:
                     try:
                         with dynamodb_table.batch_writer() as batch_writer:
-                            logger.info(
+                            logger.debug(
                                 "Saving batch #%s of metrics to DynamoDB",
                                 batch_number,
                             )
@@ -661,3 +666,7 @@ def lambda_handler(event, context):
         )
         if len(detailed_new_executions):
             save_execution_data_to_s3(all_executions, s3_bucket, s3_key)
+        logger.info(
+            "Finished metric collection and reporting for state machine '%s'",
+            state_machine_name,
+        )
