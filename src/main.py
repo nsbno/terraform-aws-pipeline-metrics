@@ -298,16 +298,6 @@ def get_state_events(state_name, events):
     }
 
 
-def get_state_info(state_name, state_machine_name, events, table):
-    """Return a dictionary containing various data for a given state in a given execution"""
-    state_data = get_state_data_from_dynamodb(
-        state_name, state_machine_name, table
-    )
-    state_events = get_state_events(state_name, events)
-
-    return {"state_name": state_name, "state_data": state_data, **state_events}
-
-
 def get_metrics(state_machine_name, executions):
     """Return metrics (formatted as CloudWatch Custom Metrics) based on a list of detailed Step Function executions"""
     logger.info(
