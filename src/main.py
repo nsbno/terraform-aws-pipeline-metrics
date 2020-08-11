@@ -511,7 +511,7 @@ def save_processed_executions_to_s3(executions, s3_bucket, s3_prefix):
         s3_prefix,
     )
     for execution in executions:
-        s3_key = f'{s3_prefix}/{execution["name"]}_{execution["startDate"].isoformat()}.json'.lower()
+        s3_key = f'{s3_prefix}/{int(execution["startDate"].timestamp() * 1000)}_{execution["name"]}.json'.lower()
         try:
             obj = s3.Object(s3_bucket, s3_key)
         except botocore.exceptions.ClientError:
@@ -526,7 +526,7 @@ def save_processed_executions_to_s3(executions, s3_bucket, s3_prefix):
         obj.put(Body=body)
 
 
-def get_unprocessed_executions(executions, s3_bucket, s3_prefix):
+def filter_processed_executions(executions, s3_bucket, s3_prefix):
     """Return a list of executions that have not had their execution data saved
     to S3 (i.e., unprocessed)"""
     s3 = boto3.client("s3")
@@ -563,7 +563,7 @@ def get_unprocessed_executions(executions, s3_bucket, s3_prefix):
     )
     unprocessed_executions = list(
         filter(
-            lambda e: f'{e["name"]}_{e["startDate"].isoformat()}.json'.lower()
+            lambda e: f'{int(e["startDate"].timestamp() * 1000)}_{e["name"]}.json'.lower()
             not in filenames,
             executions,
         )
@@ -599,7 +599,7 @@ def lambda_handler(event, context):
             if e["status"] == "RUNNING":
                 break
             completed_executions.append(e)
-        new_executions = get_unprocessed_executions(
+        new_executions = filter_processed_executions(
             completed_executions, s3_bucket, s3_prefix
         )
 
