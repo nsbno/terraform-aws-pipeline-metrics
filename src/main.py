@@ -689,25 +689,38 @@ def lambda_handler(event, context):
                     "Successfully published batch #%s of metrics to CloudWatch",
                     batch_number,
                 )
-                # TODO: Add some retry logic to the DynamoDB writes
-                # It is very important that these calls succeed
-                with dynamodb_table.batch_writer() as batch_writer:
-                    logger.info(
-                        "Saving batch %s of metrics to DynamoDB", i + 1
-                    )
-                    for m in batch:
-                        # Any side effects from doing a mutation here?
-                        time_to_live = (
-                            m["metric_data"]["Timestamp"] + timedelta(days=15)
-                        ).isoformat()
-                        m["metric_data"]["Timestamp"] = m["metric_data"][
-                            "Timestamp"
-                        ].isoformat()
-                        item = {
-                            "time_to_live": time_to_live,
-                            **m,
-                        }
-                        batch_writer.put_item(Item=item)
+
+                retries = 0
+                while True:
+                    try:
+                        with dynamodb_table.batch_writer() as batch_writer:
+                            logger.info(
+                                "Saving batch #%s of metrics to DynamoDB",
+                                batch_number,
+                            )
+                            for m in batch:
+                                # Any side effects from doing a mutation here?
+                                time_to_live = (
+                                    m["metric_data"]["Timestamp"]
+                                    + timedelta(days=15)
+                                ).isoformat()
+                                m["metric_data"]["Timestamp"] = m[
+                                    "metric_data"
+                                ]["Timestamp"].isoformat()
+                                item = {
+                                    "time_to_live": time_to_live,
+                                    **m,
+                                }
+                                batch_writer.put_item(Item=item)
+                        break
+                    except botocore.exceptions.ClientError:
+                        logger.exception(
+                            "Failed to save batch #%s of metrics to DynamoDB",
+                            batch_number,
+                        )
+                        if retries < 2:
+                            retries += 1
+                            continue
 
         all_executions = sorted(
             saved_executions + detailed_new_executions,
