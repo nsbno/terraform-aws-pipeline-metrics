@@ -590,7 +590,6 @@ def lambda_handler(event, context):
     dynamodb_table_name = os.environ["DYNAMODB_TABLE_NAME"]
     metric_namespace = os.environ["METRIC_NAMESPACE"]
     s3_bucket = os.environ["S3_BUCKET"]
-    state_names = json.loads(os.environ["STATE_NAMES"])
     state_machine_arns = json.loads(os.environ["STATE_MACHINE_ARNS"])
 
     today = datetime.now(timezone.utc)

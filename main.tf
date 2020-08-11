@@ -58,7 +58,6 @@ resource "aws_lambda_function" "this" {
       METRIC_NAMESPACE    = local.metric_namespace
       S3_BUCKET           = aws_s3_bucket.this.id
       STATE_MACHINE_ARNS  = jsonencode(var.state_machine_arns)
-      STATE_NAMES         = jsonencode(var.states_to_collect)
     }
   }
   timeout = var.lambda_timeout
