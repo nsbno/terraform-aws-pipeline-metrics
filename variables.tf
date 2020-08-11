@@ -27,7 +27,7 @@ variable "tags" {
 
 variable "lambda_timeout" {
   description = "The maximum number of seconds the Lambda is allowed to run"
-  default     = 60
+  default     = 300
 }
 
 variable "schedule_expression" {
