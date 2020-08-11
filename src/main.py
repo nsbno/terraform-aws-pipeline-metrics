@@ -512,6 +512,75 @@ def get_deduplicated_metrics(metrics, dynamodb_table):
     return deduplicated_metrics
 
 
+def save_unprocessed_executions_to_s3(executions, s3_bucket, s3_prefix):
+    s3 = boto3.resource("s3")
+    logger.info(
+        "Saving %s newly processed executions in S3 bucket '%s' under prefix '%s'",
+        len(executions),
+        s3_bucket,
+        s3_prefix,
+    )
+    for execution in executions:
+        s3_key = f'{s3_prefix}/{execution["name"]}_{execution["startDate"].isoformat()}.json'.lower()
+        try:
+            obj = s3.Object(s3_bucket, s3_key)
+        except botocore.exceptions.ClientError:
+            logger.exception(
+                "Something went wrong when trying to load file 's3://%s/%s'",
+                s3_bucket,
+                s3_key,
+            )
+            raise
+
+        body = json.dumps(execution, default=serialize_date)
+        obj.put(Body=body)
+
+
+def get_unprocessed_executions(executions, s3_bucket, s3_prefix):
+    """Return a list of executions that have not had their execution data saved
+    to S3 (i.e., unprocessed)"""
+    s3 = boto3.client("s3")
+    response = s3.list_objects_v2(Bucket=s3_bucket, Prefix=s3_prefix)
+    try:
+        objects = response["Contents"]
+    except KeyError:
+        logger.info(
+            "Did not find any objects in bucket '%s' matching the prefix '%s'",
+            s3_bucket,
+            s3_prefix,
+        )
+        return executions
+
+    while response["IsTruncated"]:
+        response = s3.list_objects_v2(
+            Bucket=s3_bucket,
+            ContinuationToken=response["NextContinuationToken"],
+            Prefix=s3_prefix,
+        )
+        objects = objects + response["Contents"]
+    # Remove prefixes from all keys so we are left with just the filename
+    filenames = list(
+        map(
+            lambda obj: obj["Key"][
+                obj["Key"].startswith(f"{s3_prefix}/")
+                and len(f"{s3_prefix}/") :
+            ].lower(),
+            objects,
+        )
+    )
+    filenames = list(
+        filter(lambda filename: filename.endswith(".json"), filenames)
+    )
+    unprocessed_executions = list(
+        filter(
+            lambda e: f'{e["name"]}_{e["startDate"].isoformat()}.json'.lower()
+            not in filenames,
+            executions,
+        )
+    )
+    return unprocessed_executions
+
+
 def lambda_handler(event, context):
     logger.info("Lambda triggered with event '%s'", event)
 
@@ -530,7 +599,7 @@ def lambda_handler(event, context):
 
     for state_machine_arn in state_machine_arns:
         state_machine_name = state_machine_arn.split(":")[6]
-        s3_key = f"{current_account_id}/{state_machine_name}/executions.json"
+        s3_prefix = f"{current_account_id}/{state_machine_name}"
         executions = sfn.list_executions(
             stateMachineArn=state_machine_arn, maxResults=100,
         )["executions"]
@@ -540,23 +609,8 @@ def lambda_handler(event, context):
             if e["status"] == "RUNNING":
                 break
             completed_executions.append(e)
-        saved_executions = get_execution_data_from_s3(s3_bucket, s3_key)
-        names_of_saved_executions = list(
-            map(
-                lambda e: f'{e["name"]}|{e["startDate"].isoformat()}',
-                saved_executions,
-            )
-        )
-        new_executions = (
-            list(
-                filter(
-                    lambda e: f'{e["name"]}|{e["startDate"].isoformat()}'
-                    not in names_of_saved_executions,
-                    completed_executions,
-                )
-            )
-            if len(saved_executions)
-            else completed_executions
+        new_executions = get_unprocessed_executions(
+            completed_executions, s3_bucket, s3_prefix
         )
 
         detailed_new_executions = get_detailed_executions(
@@ -660,12 +714,10 @@ def lambda_handler(event, context):
                             retries += 1
                             continue
 
-        all_executions = sorted(
-            saved_executions + detailed_new_executions,
-            key=lambda e: e["startDate"],
-        )
         if len(detailed_new_executions):
-            save_execution_data_to_s3(all_executions, s3_bucket, s3_key)
+            save_unprocessed_executions_to_s3(
+                detailed_new_executions, s3_bucket, s3_prefix
+            )
         logger.info(
             "Finished metric collection and reporting for state machine '%s'",
             state_machine_name,
