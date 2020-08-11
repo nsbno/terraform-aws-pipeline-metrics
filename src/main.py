@@ -538,6 +538,7 @@ def lambda_handler(event, context):
     logger.info("Lambda triggered with event '%s'", event)
 
     region = os.environ["AWS_REGION"]
+    current_account_id = os.environ["CURRENT_ACCOUNT_ID"]
     metric_namespace = os.environ["METRIC_NAMESPACE"]
     s3_bucket = os.environ["S3_BUCKET"]
     state_names = json.loads(os.environ["STATE_NAMES"])

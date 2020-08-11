@@ -76,6 +76,7 @@ resource "aws_lambda_function" "this" {
       STATE_NAMES        = jsonencode(var.states_to_collect)
       STATE_MACHINE_ARNS = jsonencode(var.state_machine_arns)
       METRIC_NAMESPACE   = local.metric_namespace
+      CURRENT_ACCOUNT_ID  = local.current_account_id
     }
   }
   timeout = var.lambda_timeout
