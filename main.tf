@@ -235,7 +235,6 @@ resource "aws_cloudwatch_dashboard" "this" {
             yAxis = {
               left = {
                 min       = 0
-                max       = 100
                 showUnits = false
                 label     = "Frequency"
               }
@@ -267,6 +266,7 @@ resource "aws_cloudwatch_dashboard" "this" {
             yAxis = {
               left = {
                 min       = 0
+                max       = 100
                 showUnits = false
                 label     = "Percentage"
               }
