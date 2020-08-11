@@ -5,7 +5,8 @@
 # Distributed under terms of the MIT license.
 
 """
-
+An AWS Lambda function for collecting and reporting metrics associated with
+AWS Step Functions state machines.
 """
 from concurrent.futures import ThreadPoolExecutor as PoolExecutor
 from timeit import default_timer as timer
@@ -13,11 +14,11 @@ import decimal
 import os
 import logging
 import json
-import urllib
-import boto3
-import botocore
 from datetime import datetime, date, timedelta, timezone
 from functools import reduce
+
+import boto3
+import botocore
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -635,7 +636,7 @@ def lambda_handler(event, context):
 
         metrics = get_metrics(state_machine_name, detailed_new_executions)
         logger.info(
-            "Found %s new, completed executions and %s metrics for state machine '%s'",
+            "Found %s unprocessed, completed executions and %s metrics for state machine '%s'",
             len(detailed_new_executions),
             len(metrics),
             state_machine_name,
