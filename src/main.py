@@ -544,7 +544,7 @@ def get_deduplicated_metrics(metrics, dynamodb_table):
             **acc,
             curr["execution"]: acc.get(curr["execution"], []) + [curr],
         },
-        filtered_metrics,
+        metrics,
         {},
     )
     for execution, execution_metrics in grouped_by_execution.items():
