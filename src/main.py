@@ -662,6 +662,7 @@ def lambda_handler(event, context):
             batch_size = 20
             cloudwatch = boto3.client("cloudwatch")
             for i in range(0, len(deduplicated_metrics), batch_size):
+                batch_number = (i // batch_size) + 1
                 retries = 0
                 batch = deduplicated_metrics[i : i + batch_size]
                 while True:
@@ -675,8 +676,8 @@ def lambda_handler(event, context):
                         break
                     except botocore.exceptions.ClientError:
                         logger.exception(
-                            "Failed to publish metrics batch #%s for state machine '%s'",
-                            (i + 1),
+                            "Failed to publish batch #%s of metrics to CloudWatch",
+                            batch_number,
                             state_machine_name,
                         )
                         if retries < 2:
@@ -685,8 +686,8 @@ def lambda_handler(event, context):
                         raise
 
                 logger.info(
-                    "Successfully published batch %s of metrics to CloudWatch",
-                    i + 1,
+                    "Successfully published batch #%s of metrics to CloudWatch",
+                    batch_number,
                 )
                 # TODO: Add some retry logic to the DynamoDB writes
                 # It is very important that these calls succeed
