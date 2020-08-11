@@ -15,24 +15,6 @@ data "archive_file" "this" {
 }
 
 resource "aws_dynamodb_table" "this" {
-  name         = "${var.name_prefix}-pipeline-state-data"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "state_machine_name"
-  range_key    = "state_name"
-
-  attribute {
-    name = "state_machine_name"
-    type = "S"
-  }
-
-  attribute {
-    name = "state_name"
-    type = "S"
-  }
-  tags = var.tags
-}
-
-resource "aws_dynamodb_table" "metrics" {
   name         = "${var.name_prefix}-pipeline-metrics"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "execution"
