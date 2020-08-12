@@ -10,7 +10,6 @@ AWS Step Functions state machines.
 """
 from concurrent.futures import ThreadPoolExecutor as PoolExecutor
 from timeit import default_timer as timer
-import decimal
 import os
 import logging
 import json
