@@ -537,7 +537,7 @@ def get_deduplicated_metrics(metrics, dynamodb_table):
     return deduplicated_metrics
 
 
-def save_processed_executions_to_s3(executions, s3_bucket, s3_prefix):
+def save_executions_to_s3(executions, s3_bucket, s3_prefix):
     """Save a list of executions to S3 -- one file per execution"""
     s3 = boto3.resource("s3")
     logger.info(
@@ -741,7 +741,7 @@ def lambda_handler(event, context):
                             continue
 
         if len(detailed_new_executions):
-            save_processed_executions_to_s3(
+            save_executions_to_s3(
                 detailed_new_executions, s3_bucket, s3_prefix
             )
         logger.info(
