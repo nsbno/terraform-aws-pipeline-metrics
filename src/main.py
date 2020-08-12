@@ -299,13 +299,15 @@ def get_state_events(state_name, events):
 
 
 def get_metrics(state_machine_name, executions):
-    """Return metrics (formatted as CloudWatch Custom Metrics) based on a list of detailed Step Function executions"""
+    """Return metrics (formatted as CloudWatch Custom Metrics) based on a list
+    of detailed AWS Step Functions state machine executions"""
     logger.info(
         "Calculating metrics for %s executions in state machine '%s'",
         len(executions),
         state_machine_name,
     )
     metrics = []
+    failed_execution = {}
     failed_states = {}
     for e in executions:
         detailed_states = [
@@ -318,16 +320,19 @@ def get_metrics(state_machine_name, executions):
         metrics.append(
             {
                 "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
-                "metric": "PipelineSuccess",
+                "metric": "StateMachineSuccess",
                 "execution_arn": e["executionArn"],
                 "start_date": e["startDate"].isoformat(),
                 "metric_data": {
-                    "MetricName": "PipelineSuccess"
+                    "MetricName": "StateMachineSuccess"
                     if e["status"] == "SUCCEEDED"
-                    else "PipelineFail",
+                    else "StateMachineFail",
                     "Timestamp": e["stopDate"],
                     "Dimensions": [
-                        {"Name": "PipelineName", "Value": state_machine_name},
+                        {
+                            "Name": "StateMachineName",
+                            "Value": state_machine_name,
+                        },
                     ],
                     "Value": int(
                         (e["stopDate"] - e["startDate"]).total_seconds() * 1000
@@ -336,6 +341,36 @@ def get_metrics(state_machine_name, executions):
                 },
             }
         )
+        if e["status"] == "SUCCEEDED" and failed_execution:
+            metrics.append(
+                {
+                    "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
+                    "metric": "StateMachineRecovery",
+                    "execution_arn": e["executionArn"],
+                    "start_date": e["startDate"].isoformat(),
+                    "metric_data": {
+                        "MetricName": "StateMachineRecovery",
+                        "Timestamp": e["stopDate"],
+                        "Dimensions": [
+                            {
+                                "Name": "StateMachineName",
+                                "Value": state_machine_name,
+                            },
+                        ],
+                        "Value": int(
+                            (
+                                e["stopDate"] - failed_execution["stopDate"]
+                            ).total_seconds()
+                            * 1000
+                        ),
+                        "Unit": "Milliseconds",
+                    },
+                }
+            )
+            failed_execution = {}
+        elif e["status"] != "SUCCEEDED" and not failed_execution:
+            failed_execution = e
+
         for state in detailed_states:
             # TODO: Is success_event without exit_event even possible?
             state_name = state["state_name"]
@@ -351,7 +386,7 @@ def get_metrics(state_machine_name, executions):
                             "Timestamp": state["success_event"]["timestamp"],
                             "Dimensions": [
                                 {
-                                    "Name": "PipelineName",
+                                    "Name": "StateMachineName",
                                     "Value": state_machine_name,
                                 },
                                 {"Name": "StateName", "Value": state_name,},
@@ -383,7 +418,7 @@ def get_metrics(state_machine_name, executions):
                                 "MetricName": "StateRecovery",
                                 "Dimensions": [
                                     {
-                                        "Name": "PipelineName",
+                                        "Name": "StateMachineName",
                                         "Value": state_machine_name,
                                     },
                                     {
@@ -426,7 +461,7 @@ def get_metrics(state_machine_name, executions):
                             "Timestamp": state["fail_event"]["timestamp"],
                             "Dimensions": [
                                 {
-                                    "Name": "PipelineName",
+                                    "Name": "StateMachineName",
                                     "Value": state_machine_name,
                                 },
                                 {"Name": "StateName", "Value": state_name},
