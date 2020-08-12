@@ -490,7 +490,7 @@ def get_metrics(state_machine_name, executions):
 
 
 def get_deduplicated_metrics(metrics, dynamodb_table):
-    """Returns a list of metrics that did not already exist in DynamoDB"""
+    """Return a list of metrics that does not already exist in DynamoDB"""
     deduplicated_metrics = []
     logger.info("Checking if any of the metrics already exist in DynamoDB")
     grouped_by_execution = reduce(
