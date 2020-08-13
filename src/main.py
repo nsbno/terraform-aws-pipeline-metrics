@@ -224,71 +224,8 @@ def get_detailed_executions(
     return results
 
 
-def save_execution_data_to_s3(executions, s3_bucket, s3_key):
-    """Save Step Function execution data to S3"""
-    logger.info(
-        "Saving data for %s executions to file 's3://%s/%s'",
-        len(executions),
-        s3_bucket,
-        s3_key,
-    )
-    s3 = boto3.resource("s3")
-    try:
-        obj = s3.Object(s3_bucket, s3_key)
-    except botocore.exceptions.ClientError:
-        logger.exception(
-            "Something went wrong when trying to download file 's3://%s/%s'",
-            s3_bucket,
-            s3_key,
-        )
-        raise
-
-    body = json.dumps(executions, default=serialize_date)
-    obj.put(Body=body)
-
-
-def get_execution_data_from_s3(s3_bucket, s3_key):
-    """Return Step Function execution data saved in S3"""
-    logger.info(
-        "Fetching Step Function execution data from file 's3://%s/%s'",
-        s3_bucket,
-        s3_key,
-    )
-    s3 = boto3.resource("s3")
-    try:
-        obj = s3.Object(s3_bucket, s3_key)
-        obj.load()  # Will fail if file does not exist
-    except botocore.exceptions.ClientError as e:
-        if e.response["Error"]["Code"] == "404":
-            logger.debug("File 's3://%s/%s' does not exist", s3_bucket, s3_key)
-            return []
-        else:
-            logger.exception(
-                "Something went wrong when trying to download file 's3://%s/%s'",
-                s3_bucket,
-                s3_key,
-            )
-            raise
-    body = obj.get()["Body"].read().decode("utf-8")
-    try:
-        saved_executions = json.loads(body, object_hook=deserialize_date)
-    except (TypeError, json.decoder.JSONDecodeError):
-        logger.exception(
-            "Something went wrong when trying to load file content '%s' as JSON",
-            body,
-        )
-        raise
-    logger.info(
-        "Found data for %s executions in file 's3://%s/%s'",
-        len(saved_executions),
-        s3_bucket,
-        s3_key,
-    )
-    return saved_executions
-
-
 def get_state_events(state_name, events):
-    """Return a dictionary of various events for a given state"""
+    """Return a dictionary of various relevant events for a given state"""
     return {
         "fail_event": get_fail_event(state_name, events),
         "success_event": get_success_event(state_name, events),
@@ -298,8 +235,13 @@ def get_state_events(state_name, events):
 
 
 def get_metrics(state_machine_name, executions):
-    """Return metrics (formatted as CloudWatch Custom Metrics) based on a list
-    of detailed AWS Step Functions state machine executions"""
+    """Return metrics based on a list of detailed AWS Step Functions
+    state machine executions. The data under each metric's `metric_data` key is
+    in the format expected by CloudWatch when publishing metrics
+    (i.e., `cloudwatch.put_metric_data(..., MetricData=metric["metric_data"]`).
+    The other fields in each metric is used for constructing unique keys
+    when saving data to DynamoDB.
+    """
     logger.info(
         "Calculating metrics for %s executions in state machine '%s'",
         len(executions),
