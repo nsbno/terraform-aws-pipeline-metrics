@@ -5,21 +5,36 @@
 # Distributed under terms of the MIT license.
 
 """
-
+An AWS Lambda function for collecting and reporting metrics associated with
+AWS Step Functions state machines.
 """
 from concurrent.futures import ThreadPoolExecutor as PoolExecutor
 from timeit import default_timer as timer
-import decimal
 import os
 import logging
 import json
-import urllib
+from datetime import datetime, date, timedelta, timezone
+from functools import reduce
+
 import boto3
 import botocore
-from datetime import datetime
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+
+def serialize_date(obj):
+    """Serialize a datetime object to a string in ISO 8601 format"""
+    if isinstance(obj, (date, datetime)):
+        return {"__date__": True, "value": obj.isoformat()}
+    return str(obj)
+
+
+def deserialize_date(dct):
+    """Deserialize a string in ISO 8601 format to a datetime object"""
+    if "__date__" in dct:
+        return datetime.fromisoformat(dct["value"])
+    return dct
 
 
 def find_event_by_backtracking(initial_event, events, condition_fn):
@@ -51,6 +66,22 @@ def get_enter_event(state, events):
     )
 
 
+def get_names_of_entered_states(events, only_task_states=True):
+    """Return the names of all states entered during an execution, optionally only including states of type `Task`"""
+    state_names = set(
+        [
+            e["stateEnteredEventDetails"]["name"]
+            for e in events
+            if e.get("stateEnteredEventDetails", False)
+            and (
+                not only_task_states
+                or (only_task_states and e["type"] == "TaskStateEntered")
+            )
+        ]
+    )
+    return state_names
+
+
 def get_fail_event(state, events):
     """Return the event that made a given state fail during an execution"""
     fail_event = next(
@@ -58,6 +89,15 @@ def get_fail_event(state, events):
             e
             for e in events
             if e["type"].endswith("Failed")
+            and any(
+                key
+                for key in e
+                if key.endswith("FailedEventDetails")
+                and all(
+                    required_key in e[key]
+                    for required_key in ["error", "cause"]
+                )
+            )
             and find_event_by_backtracking(
                 e,
                 events,
@@ -74,7 +114,7 @@ def get_fail_event(state, events):
     if fail_event:
         # Different state types use different names for storing details about the failed event
         # taskFailedEventDetails, activityFailedEventDetails, etc.
-        logger.info("State '%s failed in event '%s'", state, fail_event)
+        logger.debug("State '%s failed in event '%s'", state, fail_event)
         fail_event_details_key = next(
             (
                 key
@@ -162,8 +202,30 @@ def get_detailed_execution(execution, limit=500, client=None):
     return {**execution, **events}
 
 
+def get_detailed_executions(
+    executions, client=None,
+):
+    """Return a list of detailed executions"""
+    if client is None:
+        client = boto3.client("stepfunctions")
+    results = []
+    start = timer()
+    with PoolExecutor(max_workers=4) as executor:
+        for res in executor.map(
+            lambda e: get_detailed_execution(e, client=client), executions
+        ):
+            results.append(res)
+    end = timer()
+    logger.info(
+        "Took %s s to get execution history of %s executions in parallel",
+        end - start,
+        len(results),
+    )
+    return results
+
+
 def get_state_events(state_name, events):
-    """Return a dictionary of various events for a given state"""
+    """Return a dictionary of various relevant events for a given state"""
     return {
         "fail_event": get_fail_event(state_name, events),
         "success_event": get_success_event(state_name, events),
@@ -172,284 +234,458 @@ def get_state_events(state_name, events):
     }
 
 
-def get_state_info(state_name, state_machine_name, events, table):
-    """Return a dictionary containing various data for a given state in a given execution"""
-    state_data = get_state_data_from_dynamodb(
-        state_name, state_machine_name, table
+def get_metrics(state_machine_name, executions):
+    """Return metrics based on a list of detailed AWS Step Functions
+    state machine executions. The data under each metric's `metric_data` key is
+    in the format expected by CloudWatch when publishing metrics
+    (i.e., `cloudwatch.put_metric_data(..., MetricData=metric["metric_data"]`).
+    The other fields in each metric is used for constructing unique keys
+    when saving data to DynamoDB.
+    """
+    logger.info(
+        "Calculating metrics for %s executions in state machine '%s'",
+        len(executions),
+        state_machine_name,
     )
-    state_events = get_state_events(state_name, events)
-
-    return {"state_name": state_name, "state_data": state_data, **state_events}
-
-
-def get_state_data_from_dynamodb(state_name, state_machine_name, table):
-    """Fetch data about a given state from DynamoDB
-
-    Args:
-        state_machine_name: The name of the state machine
-        state_name: The name of the state
-        table: A DynamoDB.Table instance
-
-    Returns:
-        An item stored in the given DynamoDB table under the compound key made up of `state_machine_name` and `state_name` if such an item exists
-
-    Raises:
-        botocore.exceptions.ClientError: Failed to get item from DynamoDB
-    """
-    try:
-        response = table.get_item(
-            Key={
-                "state_machine_name": state_machine_name,
+    metrics = []
+    failed_execution = {}
+    failed_states = {}
+    for e in executions:
+        detailed_states = [
+            {
                 "state_name": state_name,
-            },
-            ConsistentRead=True,
-        )
-        if response.get("Item", None):
-            item = response["Item"]
-            # Convert Decimal to integer
-            item = {
-                k: v if not isinstance(v, decimal.Decimal) else int(v)
-                for k, v in item.items()
+                **get_state_events(state_name, e["events"]),
             }
-            logger.info("Found DynamoDB item '%s'", item)
-            return item
-        else:
-            logger.info(
-                "Did not find DynamoDB item, got response '%s'", response
+            for state_name in get_names_of_entered_states(e["events"])
+        ]
+        metrics.append(
+            {
+                "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
+                "metric": "StateMachineSuccess",
+                "execution_arn": e["executionArn"],
+                "start_date": e["startDate"].isoformat(),
+                "metric_data": {
+                    "MetricName": "StateMachineSuccess"
+                    if e["status"] == "SUCCEEDED"
+                    else "StateMachineFail",
+                    "Timestamp": e["stopDate"],
+                    "Dimensions": [
+                        {
+                            "Name": "StateMachineName",
+                            "Value": state_machine_name,
+                        },
+                    ],
+                    "Value": int(
+                        (e["stopDate"] - e["startDate"]).total_seconds() * 1000
+                    ),
+                    "Unit": "Milliseconds",
+                },
+            }
+        )
+        if e["status"] == "SUCCEEDED" and failed_execution:
+            metrics.append(
+                {
+                    "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
+                    "metric": "StateMachineRecovery",
+                    "execution_arn": e["executionArn"],
+                    "start_date": e["startDate"].isoformat(),
+                    "metric_data": {
+                        "MetricName": "StateMachineRecovery",
+                        "Timestamp": e["stopDate"],
+                        "Dimensions": [
+                            {
+                                "Name": "StateMachineName",
+                                "Value": state_machine_name,
+                            },
+                        ],
+                        "Value": int(
+                            (
+                                e["stopDate"] - failed_execution["stopDate"]
+                            ).total_seconds()
+                            * 1000
+                        ),
+                        "Unit": "Milliseconds",
+                    },
+                }
             )
-            return None
-    except botocore.exceptions.ClientError as e:
-        logger.exception(
-            "Failed to get DynamoDB item, API responded with '%s'", e.response,
+            failed_execution = {}
+        elif e["status"] != "SUCCEEDED" and not failed_execution:
+            failed_execution = e
+
+        for state in detailed_states:
+            # TODO: Is success_event without exit_event even possible?
+            state_name = state["state_name"]
+            if state["success_event"]:
+                metrics.append(
+                    {
+                        "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
+                        "metric": state_name + "|" + "StateSuccess",
+                        "execution_arn": e["executionArn"],
+                        "start_date": e["startDate"].isoformat(),
+                        "metric_data": {
+                            "MetricName": "StateSuccess",
+                            "Timestamp": state["success_event"]["timestamp"],
+                            "Dimensions": [
+                                {
+                                    "Name": "StateMachineName",
+                                    "Value": state_machine_name,
+                                },
+                                {"Name": "StateName", "Value": state_name,},
+                            ],
+                            "Value": int(
+                                (
+                                    state["success_event"]["timestamp"]
+                                    - state["enter_event"]["timestamp"]
+                                ).total_seconds()
+                                * 1000
+                            ),
+                            "Unit": "Milliseconds",
+                        },
+                    }
+                )
+                # Check if recovered from failed state, in which case calculate MTTR
+                if (
+                    failed_states.get(state_name, None)
+                    and failed_states[state_name]["startDate"].timestamp()
+                    < e["startDate"].timestamp()
+                ):
+                    metrics.append(
+                        {
+                            "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
+                            "metric": state_name + "|" + "StateRecovery",
+                            "execution_arn": e["executionArn"],
+                            "start_date": e["startDate"].isoformat(),
+                            "metric_data": {
+                                "MetricName": "StateRecovery",
+                                "Dimensions": [
+                                    {
+                                        "Name": "StateMachineName",
+                                        "Value": state_machine_name,
+                                    },
+                                    {
+                                        "Name": "StateName",
+                                        "Value": state_name,
+                                    },
+                                ],
+                                "Timestamp": state["success_event"][
+                                    "timestamp"
+                                ],
+                                "Value": int(
+                                    (
+                                        state["success_event"]["timestamp"]
+                                        - failed_states[state_name][
+                                            "fail_event"
+                                        ]["timestamp"]
+                                    ).total_seconds()
+                                    * 1000
+                                ),
+                                "Unit": "Milliseconds",
+                            },
+                        }
+                    )
+                    failed_states[state_name] = None
+            if state["fail_event"]:
+                if (
+                    not failed_states.get(state_name, None)
+                    or state["fail_event"]["timestamp"]
+                    < failed_states[state_name]["fail_event"]["timestamp"]
+                ):
+                    failed_states[state_name] = {**e, **state}
+                metrics.append(
+                    {
+                        "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
+                        "metric": state_name + "|" + "StateFail",
+                        "execution_arn": e["executionArn"],
+                        "start_date": e["startDate"].isoformat(),
+                        "metric_data": {
+                            "MetricName": "StateFail",
+                            "Timestamp": state["fail_event"]["timestamp"],
+                            "Dimensions": [
+                                {
+                                    "Name": "StateMachineName",
+                                    "Value": state_machine_name,
+                                },
+                                {"Name": "StateName", "Value": state_name},
+                                {
+                                    "Name": "FailType",
+                                    "Value": "TERRAFORM_LOCK"
+                                    if "Terraform acquires a state lock"
+                                    in state["fail_event"][
+                                        "failedEventDetails"
+                                    ]["cause"]
+                                    else "DEFAULT",
+                                },
+                            ],
+                            "Value": int(
+                                (
+                                    state["fail_event"]["timestamp"]
+                                    - state["enter_event"]["timestamp"]
+                                ).total_seconds()
+                                * 1000
+                            ),
+                            "Unit": "Milliseconds",
+                        },
+                    }
+                )
+
+    return metrics
+
+
+def get_deduplicated_metrics(metrics, dynamodb_table):
+    """Return a list of metrics that does not already exist in DynamoDB"""
+    deduplicated_metrics = []
+    logger.info("Checking if any of the metrics already exist in DynamoDB")
+    grouped_by_execution = reduce(
+        lambda acc, curr: {
+            **acc,
+            curr["execution"]: acc.get(curr["execution"], []) + [curr],
+        },
+        metrics,
+        {},
+    )
+    for execution, execution_metrics in grouped_by_execution.items():
+        response = dynamodb_table.query(
+            ConsistentRead=True,
+            KeyConditionExpression=boto3.dynamodb.conditions.Key(
+                "execution"
+            ).eq(execution),
         )
-        raise
-
-
-def set_state_data_in_dynamodb(state_data, table):
-    """Save data about a state to DynamoDB
-
-    Args:
-        state_data: The item to save to the DynamoDB table
-        table: A DynamoDB.Table instance
-
-    Raises:
-        botocore.exceptions.ClientError: Failed to create or update the item in the given DynamoDB table
-        ValueError: State data is missing one or more of the keys that make up the composite primary key in the DynamoDB table
-    """
-    required_keys = ["state_machine_name", "state_name"]
-    if not all(key in state_data for key in required_keys):
-        raise ValueError(
-            "State data missing one or more required keys for the DynamoDB composite primary key"
+        items = list(map(lambda item: item["metric"], response["Items"]))
+        while response.get("LastEvaluatedKey", None):
+            response = dynamodb_table.query(
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+                ConsistentRead=True,
+                KeyConditionExpression=boto3.dynamodb.conditions.Key(
+                    "execution"
+                ).eq(execution),
+            )
+            items += list(map(lambda item: item["metric"], response["Items"]))
+        logger.debug(
+            "Found %s items in DynamoDB with hash key '%s' %s",
+            len(items),
+            execution,
         )
+        deduplicated_metrics += list(
+            filter(
+                lambda metric: metric["metric"] not in items,
+                execution_metrics,
+            )
+        )
+
+    logger.debug(
+        "Found %s duplicate metrics", len(metrics) - len(deduplicated_metrics),
+    )
+    return deduplicated_metrics
+
+
+def save_executions_to_s3(executions, s3_bucket, s3_prefix):
+    """Save a list of executions to S3 -- one file per execution"""
+    s3 = boto3.resource("s3")
+    logger.info(
+        "Saving %s newly processed executions in S3 bucket '%s' under prefix '%s'",
+        len(executions),
+        s3_bucket,
+        s3_prefix,
+    )
+    for execution in executions:
+        s3_key = f'{s3_prefix}/{int(execution["startDate"].timestamp() * 1000)}_{execution["name"]}.json'.lower()
+        try:
+            obj = s3.Object(s3_bucket, s3_key)
+        except botocore.exceptions.ClientError:
+            logger.exception(
+                "Something went wrong when trying to load file 's3://%s/%s'",
+                s3_bucket,
+                s3_key,
+            )
+            raise
+
+        body = json.dumps(execution, default=serialize_date)
+        obj.put(Body=body)
+
+
+def filter_processed_executions(executions, s3_bucket, s3_prefix):
+    """Return a list of executions that have not had their execution data saved
+    to S3 (i.e., unprocessed)"""
+    s3 = boto3.client("s3")
+    response = s3.list_objects_v2(Bucket=s3_bucket, Prefix=s3_prefix)
     try:
-        logger.info("Updating DynamoDB Item '%s'", state_data)
-        item = table.put_item(Item=state_data)
-    except botocore.exceptions.ClientError as e:
-        logger.exception(
-            "Failed to update DynamoDB item, API responded with '%s'",
-            e.response,
+        objects = response["Contents"]
+    except KeyError:
+        logger.info(
+            "Did not find any objects in bucket '%s' matching the prefix '%s'",
+            s3_bucket,
+            s3_prefix,
         )
-        raise
+        return executions
+
+    while response["IsTruncated"]:
+        response = s3.list_objects_v2(
+            Bucket=s3_bucket,
+            ContinuationToken=response["NextContinuationToken"],
+            Prefix=s3_prefix,
+        )
+        objects = objects + response["Contents"]
+    # Remove prefixes from all keys so we are left with just the filename
+    filenames = list(
+        map(
+            lambda obj: obj["Key"][
+                obj["Key"].startswith(f"{s3_prefix}/")
+                and len(f"{s3_prefix}/") :
+            ].lower(),
+            objects,
+        )
+    )
+    filenames = list(
+        filter(lambda filename: filename.endswith(".json"), filenames)
+    )
+    unprocessed_executions = list(
+        filter(
+            lambda e: f'{int(e["startDate"].timestamp() * 1000)}_{e["name"]}.json'.lower()
+            not in filenames,
+            executions,
+        )
+    )
+    return unprocessed_executions
 
 
 def lambda_handler(event, context):
     logger.info("Lambda triggered with event '%s'", event)
 
     region = os.environ["AWS_REGION"]
+    current_account_id = os.environ["CURRENT_ACCOUNT_ID"]
+    dynamodb_table_name = os.environ["DYNAMODB_TABLE_NAME"]
     metric_namespace = os.environ["METRIC_NAMESPACE"]
-    state_names = json.loads(os.environ["STATE_NAMES"])
+    s3_bucket = os.environ["S3_BUCKET"]
+    state_machine_arns = json.loads(os.environ["STATE_MACHINE_ARNS"])
 
-    logger.info("Collecting metrics for states '%s'", state_names)
-
-    status = event["detail"]["status"]
-    state_machine_arn = event["detail"]["stateMachineArn"]
-    execution_arn = event["detail"]["executionArn"]
-    timestamp = event["time"]
-    state_machine_name = state_machine_arn.split(":")[6]
+    today = datetime.now(timezone.utc)
+    sfn = boto3.client("stepfunctions")
 
     dynamodb = boto3.resource("dynamodb")
-    dynamodb_table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+    dynamodb_table = dynamodb.Table(dynamodb_table_name)
 
-    execution_name = execution_arn.split(":")[7]
-
-    client = boto3.client("stepfunctions")
-    response = client.get_execution_history(
-        executionArn=execution_arn, maxResults=500, reverseOrder=True
-    )
-    events = response["events"]
-
-    detailed_states = [
-        get_state_info(state_name, state_machine_name, events, dynamodb_table)
-        for state_name in state_names
-    ]
-    logger.info(
-        "Using detailed information about the states '%s'", detailed_states
-    )
-
-    metrics = []
-
-    for state in detailed_states:
-        if not state["enter_event"]:
-            logger.info(
-                "Not collecting metrics for state '%s' as it was never entered during execution",
-                state["state_name"],
-            )
-            continue
-        dimensions = [
-            {"Name": "PipelineName", "Value": state_machine_name},
-            {"Name": "StateName", "Value": state["state_name"]},
-        ]
-        if state["success_event"] and state["exit_event"]:
-            logger.info(
-                "State '%s' was entered and successfully exited",
-                state["state_name"],
-            )
-            metric_name = "StateSuccess"
-            timestamp = state["exit_event"]["timestamp"]
-        elif state["fail_event"]:
-            logger.info(
-                "State '%s' was entered, but did not successfully exit",
-                state["state_name"],
-            )
-            if state["state_data"] and state["state_data"]["fixed"]:
-                new_state_data = {
-                    **state["state_data"],
-                    "failed_execution": execution_arn,
-                    "failed_at": int(
-                        state["exit_event"]["timestamp"].timestamp() * 1000
-                    ),
-                    "fixed": False,
-                    "fixed_execution": None,
-                    "fixed_at": None,
-                }
-                # TODO: Check if state data already has been updated after the current execution's end time
-                set_state_data_in_dynamodb(new_state_data, dynamodb_table)
-
-            metric_name = "StateFail"
-            timestamp = state["fail_event"]["timestamp"]
-            dimensions.append(
-                {
-                    "Name": "FailType",
-                    "Value": "TERRAFORM_LOCK"
-                    if state["fail_event"]
-                    and "Terraform acquires a state lock"
-                    in state["fail_event"]["failedEventDetails"]["cause"]
-                    else "DEFAULT",
-                }
-            )
-        else:
-            logger.warn(
-                "State '%s' did not contain success AND exit event, or fail event",
-                state["state_name"],
-            )
-            continue
-        metrics.append(
-            {
-                "MetricName": metric_name,
-                "Dimensions": dimensions,
-                "Timestamp": timestamp,
-                "Value": 1,
-                "Unit": "Count",
-            }
+    for state_machine_arn in state_machine_arns:
+        state_machine_name = state_machine_arn.split(":")[6]
+        s3_prefix = f"{current_account_id}/{state_machine_name}"
+        executions = sfn.list_executions(
+            stateMachineArn=state_machine_arn, maxResults=100,
+        )["executions"]
+        executions = sorted(executions, key=lambda e: e["startDate"])
+        completed_executions = []
+        for e in executions:
+            if e["status"] == "RUNNING":
+                break
+            completed_executions.append(e)
+        new_executions = filter_processed_executions(
+            completed_executions, s3_bucket, s3_prefix
         )
 
-        if (
-            state["success_event"]
-            and state["exit_event"]
-            and state["state_data"]
-            and not state["state_data"]["fixed"]
-        ):
-            if state["state_data"]["failed_at"] < event["detail"]["startDate"]:
-                logger.info(
-                    "State '%s' has been restored from a failure in an earlier execution '%s'",
-                    state["state_name"],
-                    state["state_data"]["failed_execution"],
-                )
-                new_state_data = {
-                    **state["state_data"],
-                    "fixed": True,
-                    "fixed_execution": execution_arn,
-                    "fixed_at": int(
-                        state["exit_event"]["timestamp"].timestamp() * 1000
-                    ),
-                }
-                set_state_data_in_dynamodb(new_state_data, dynamodb_table)
+        detailed_new_executions = get_detailed_executions(
+            new_executions, client=sfn
+        )
 
-                # Only update MeanTimeToRecovery if previously failed state failed because of Terraform lock
-                failed_execution = get_detailed_execution(
-                    {"executionArn": state["state_data"]["failed_execution"]}
+        metrics = get_metrics(state_machine_name, detailed_new_executions)
+        logger.info(
+            "Found %s unprocessed, completed executions and %s metrics for state machine '%s'",
+            len(detailed_new_executions),
+            len(metrics),
+            state_machine_name,
+        )
+        filtered_metrics = list(
+            filter(
+                lambda m: m["metric_data"]["Timestamp"]
+                > (today - timedelta(weeks=2)),
+                metrics,
+            )
+        )
+        if len(metrics) != len(filtered_metrics):
+            logger.info(
+                "Filtered out %s metrics as they were more than two weeks old",
+                len(metrics) - len(filtered_metrics),
+            )
+
+        if len(filtered_metrics):
+            deduplicated_metrics = get_deduplicated_metrics(
+                filtered_metrics, dynamodb_table
+            )
+            logger.info(
+                "%s metrics will be published to CloudWatch for state machine '%s'",
+                len(deduplicated_metrics),
+                state_machine_name,
+            )
+
+            # Batch the requests due to API limits (max. 20 metrics per API call)
+            batch_size = 20
+            cloudwatch = boto3.client("cloudwatch")
+            for i in range(0, len(deduplicated_metrics), batch_size):
+                batch_number = (i // batch_size) + 1
+                retries = 0
+                batch = deduplicated_metrics[i : i + batch_size]
+                while True:
+                    try:
+                        response = cloudwatch.put_metric_data(
+                            Namespace=metric_namespace,
+                            MetricData=list(
+                                map(lambda m: m["metric_data"], batch)
+                            ),
+                        )
+                        break
+                    except botocore.exceptions.ClientError:
+                        logger.exception(
+                            "Failed to publish batch #%s of metrics to CloudWatch",
+                            batch_number,
+                            state_machine_name,
+                        )
+                        if retries < 2:
+                            retries += 1
+                            continue
+                        raise
+
+                logger.debug(
+                    "Successfully published batch #%s of metrics to CloudWatch",
+                    batch_number,
                 )
-                failed_execution_event = get_fail_event(
-                    state["state_name"], failed_execution["events"]
-                )
-                if (
-                    failed_execution_event
-                    and "Terraform acquires a state lock"
-                    in failed_execution_event["failedEventDetails"]["cause"]
-                ):
-                    logger.info(
-                        "Not updating MeanTimeToRecovery for state '%s' as earlier execution failed due to Terraform lock",
-                        state["state_name"],
-                    )
-                else:
-                    metrics.append(
-                        {
-                            "MetricName": "MeanTimeToRecovery",
-                            "Dimensions": [
-                                {
-                                    "Name": "PipelineName",
-                                    "Value": state_machine_name,
-                                },
-                                {
-                                    "Name": "StateName",
-                                    "Value": state["state_name"],
-                                },
-                            ],
-                            "Timestamp": state["exit_event"]["timestamp"],
-                            "Value": int(
-                                state["exit_event"]["timestamp"].timestamp()
-                                * 1000
+
+                retries = 0
+                while True:
+                    try:
+                        with dynamodb_table.batch_writer() as batch_writer:
+                            logger.debug(
+                                "Saving batch #%s of metrics to DynamoDB",
+                                batch_number,
                             )
-                            - state["state_data"]["failed_at"],
-                            "Unit": "Milliseconds",
-                        }
-                    )
-            else:
-                logger.info(
-                    "State '%s' was in a failed state, but the failure occured AFTER the current execution had started, so skipping metric collecting for MeanTimeToRecovery",
-                    state["state_name"],
-                )
+                            for m in batch:
+                                time_to_live = (
+                                    m["metric_data"]["Timestamp"]
+                                    + timedelta(days=15)
+                                ).isoformat()
+                                timestamp = m["metric_data"][
+                                    "Timestamp"
+                                ].isoformat()
+                                item = {
+                                    **m,
+                                    "time_to_live": time_to_live,
+                                    "metric_data": {
+                                        **m["metric_data"],
+                                        "Timestamp": timestamp,
+                                    },
+                                }
+                                batch_writer.put_item(Item=item)
+                        break
+                    except botocore.exceptions.ClientError:
+                        logger.exception(
+                            "Failed to save batch #%s of metrics to DynamoDB",
+                            batch_number,
+                        )
+                        if retries < 2:
+                            retries += 1
+                            continue
 
-    if status == "SUCCEEDED":
-        """
-        Update lead time metric if execution was successful
-        """
-        start_time = event["detail"]["startDate"]
-        end_time = event["detail"]["stopDate"]
-        if (
-            start_time
-            and end_time
-            and all(state["enter_event"] for state in detailed_states)
-        ):
-            duration = end_time - start_time
-            metrics.append(
-                {
-                    "MetricName": "LeadTime",
-                    "Dimensions": [
-                        {"Name": "PipelineName", "Value": state_machine_name},
-                    ],
-                    "Timestamp": timestamp,
-                    "Value": duration,
-                    "Unit": "Milliseconds",
-                }
+        if len(detailed_new_executions):
+            save_executions_to_s3(
+                detailed_new_executions, s3_bucket, s3_prefix
             )
-
-    if len(metrics):
-        logger.info("Sending metrics to CloudWatch '%s'", metrics)
-        cloudwatch_client = boto3.client("cloudwatch")
-        response = cloudwatch_client.put_metric_data(
-            Namespace=metric_namespace, MetricData=metrics,
+        logger.info(
+            "Finished metric collection and reporting for state machine '%s'",
+            state_machine_name,
         )
-        logger.info("Response from putting metric '%s'", response)
-    else:
-        logger.info("No metrics to send to CloudWatch")

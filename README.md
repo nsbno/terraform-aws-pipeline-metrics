@@ -1,12 +1,20 @@
-## terraform-aws-pipeline-metrics
+# terraform-aws-pipeline-metrics
+A Terraform module for creating a Lambda that periodically calculates and reports granular metrics for one or multiple AWS Step Functions state machines.
 
-A Terraform module for reporting metrics wrt. a CD pipeline implemented in AWS Step Functions, and displaying these metrics in a CloudWatch dashboard.
+## Metrics
+The metrics are calculated using data from `boto3`'s `sfn` client, which among many other things, gives you access to the timestamped _events_ that occurred during a given execution (`TaskStateEntered`, `TaskSucceeded`, `TaskFailed`, etc.). This "raw" data received from the API is saved in S3 for future analysis, as data about a given execution is only available through the API for 90 days.
 
-A Lambda function is triggered every time a Step Function execution succeeds or fails, and metrics are sent to CloudWatch. For a given state machine, the following metrics are collected on a per-state basis:
-- **Deployment Frequency**: number of times the state has successfully exited
-- **Change Failure Rate**: percentage of times the state has failed versus succeeded, i.e., `100 * successes/(successes + failures)`.
-- **Mean Time to Recovery**: time it takes for a state to go from failure to success
+Three metrics are calculated on an execution-basis, and these metrics are calculated using basic execution data (i.e., did the execution succeed? When did it start and end?):
+- **StateMachineSuccess**: time it took for an execution to succeed (milliseconds).
+- **StateMachineFail**: time it took for an execution to fail (milliseconds).
+- **StateMachineRecovery**: time it took for the state machine to go from fail to success (milliseconds).
 
-Additionally, **Lead Time** for a given Step Function is calculated based on execution time for successful Step Function executions that have entered a predefined set of states (e.g., `Deploy Test`, `Deploy Stage`, `Deploy Prod`).
+Three metrics are calculated for each state in an execution, and these metrics are calculated mainly using the different events for a given execution:
+- **StateSuccess**: time it took for the state to succeed (milliseconds).
+- **StateFail**: time it took for the state to fail (milliseconds).
+- **StateRecovery**: time it took for the state to go from fail to success (milliseconds).
 
-DynamoDB is used to store some intermediate data about the states that makes it easy to calculate the Mean Time to Recovery without having to use the AWS SDK to look up information about different executions and filter through them.
+Metrics are published to CloudWatch as Custom Metrics and a CloudWatch dashboard is set up to visualize them. The metrics are additionally saved in DynamoDB to avoid publishing duplicate metrics in a later Lambda invocation.
+
+## Caveats
+Currently been tested on a large state machine without any loops, and mainly `Task` states.
