@@ -8,8 +8,15 @@ variable "state_machine_arns" {
   type        = list(string)
 }
 
+variable "create_cloudwatch_dashboard" {
+  description = "Whether to create a CloudWatch dashboard per state machine or not."
+  default     = false
+  type        = bool
+}
+
 variable "states_to_display" {
-  description = "Names of states to display in the CloudWatch Dashboard."
+  description = "Names of states to display in the CloudWatch dashboards."
+  default     = []
   type        = list(string)
 }
 

@@ -112,7 +112,7 @@ resource "aws_lambda_permission" "this" {
 }
 
 resource "aws_cloudwatch_dashboard" "this" {
-  for_each       = toset(local.state_machine_names)
+  for_each       = var.create_cloudwatch_dashboard ? toset(local.state_machine_names) : toset([])
   dashboard_name = "${var.name_prefix}-${each.key}-pipeline-metrics"
   dashboard_body = jsonencode({
     start          = "-P7D"
