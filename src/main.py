@@ -585,37 +585,47 @@ def lambda_handler(event, context):
                 first_running_execution = execution
                 break
             completed_executions.append(execution)
-        executions = list(
+        completed_executions_filtered = list(
             filter(
                 lambda execution: execution["status"] == "SUCCEEDED"
                 and execution["stopDate"]
                 < first_running_execution["startDate"],
-                executions,
+                completed_executions,
             )
         )
+        if len(completed_executions) != len(completed_executions_filtered):
+            logger.info(
+                "Ignoring %s completed executions that needs to wait for one or more running executions to finish",
+                len(completed_executions) - len(completed_executions_filtered),
+            )
+
         new_executions = filter_processed_executions(
-            completed_executions, s3_bucket, s3_prefix
+            completed_executions_filtered, s3_bucket, s3_prefix
         )
 
         detailed_new_executions = get_detailed_executions(
             new_executions, client=sfn
         )
+        logger.info(
+            "Found %s unprocessed, completed executions for state machine '%s'",
+            len(detailed_new_executions),
+            state_machine_name,
+        )
 
         metrics, unprocessed_execution_arns = get_metrics(
             state_machine_name, detailed_new_executions
         )
+        if len(unprocessed_execution_arns):
+            logger.info(
+                "%s executions to be processed at a later time due to failed states that have not yet been recovered",
+                len(unprocessed_execution_arns),
+            )
         processed_executions = list(
             filter(
                 lambda execution: execution["executionArn"]
                 not in unprocessed_execution_arns,
                 detailed_new_executions,
             )
-        )
-        logger.info(
-            "Found %s unprocessed, completed executions and %s metrics for state machine '%s'",
-            len(detailed_new_executions),
-            len(metrics),
-            state_machine_name,
         )
         filtered_metrics = list(
             filter(
