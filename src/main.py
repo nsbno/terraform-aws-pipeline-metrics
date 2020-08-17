@@ -599,7 +599,7 @@ def lambda_handler(event, context):
                 None,
             ):
                 logger.info(
-                    "Skipping metric collection and reporting for state machine %s as we need to wait for one or more running executions to finish before we can accurately calculate metrics",
+                    "Skipping metric collection and reporting for state machine '%s' as we need to wait for one or more running executions to finish before metrics can be accurately calculated",
                     state_machine_name,
                 )
                 continue
