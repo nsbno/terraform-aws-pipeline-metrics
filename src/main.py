@@ -577,7 +577,7 @@ def lambda_handler(event, context):
         state_machine_name = state_machine_arn.split(":")[6]
         s3_prefix = f"{current_account_id}/{state_machine_name}"
         executions = sfn.list_executions(
-            stateMachineArn=state_machine_arn, maxResults=100,
+            stateMachineArn=state_machine_arn, maxResults=500,
         )["executions"]
         executions = sorted(executions, key=lambda e: e["startDate"])
         completed_executions = []
