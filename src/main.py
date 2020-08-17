@@ -348,6 +348,8 @@ def get_metrics(state_machine_name, executions):
                     failed_states.get(state_name, None)
                     and failed_states[state_name]["startDate"].timestamp()
                     < e["startDate"].timestamp()
+                    and failed_states[state_name]["fail_event"]["timestamp"]
+                    < state["success_event"]["timestamp"]
                 ):
                     metrics.append(
                         {
