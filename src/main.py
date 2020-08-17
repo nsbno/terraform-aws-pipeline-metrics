@@ -436,6 +436,7 @@ def get_metrics(state_machine_name, executions):
     for state_name, state_data in failed_states.items():
         if state_data:
             unprocessed_execution_arns.append(state_data["executionArn"])
+    unprocessed_execution_arns = list(set(unprocessed_execution_arns))
     return metrics, unprocessed_execution_arns
 
 
