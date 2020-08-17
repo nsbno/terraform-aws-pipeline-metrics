@@ -580,6 +580,7 @@ def lambda_handler(event, context):
         )["executions"]
         executions = sorted(executions, key=lambda e: e["startDate"])
         completed_executions = []
+        first_running_execution = None
         for i, execution in enumerate(executions):
             if execution["status"] == "RUNNING":
                 first_running_execution = execution
@@ -587,9 +588,12 @@ def lambda_handler(event, context):
             completed_executions.append(execution)
         completed_executions_filtered = list(
             filter(
-                lambda execution: execution["status"] == "SUCCEEDED"
-                and execution["stopDate"]
-                < first_running_execution["startDate"],
+                lambda execution: not first_running_execution
+                or (
+                    execution["status"] != "SUCCEEDED"
+                    and execution["stopDate"]
+                    < first_running_execution["startDate"]
+                ),
                 completed_executions,
             )
         )
