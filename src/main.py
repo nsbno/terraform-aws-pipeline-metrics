@@ -574,10 +574,13 @@ def lambda_handler(event, context):
         )["executions"]
         executions = sorted(executions, key=lambda e: e["startDate"])
         completed_executions = []
-        for e in executions:
-            if e["status"] == "RUNNING":
+        for i, execution in enumerate(executions):
+            if execution["status"] == "RUNNING" or (
+                i < (len(executions) - 1)
+                and executions[i + 1]["status"] == "RUNNING"
+            ):
                 break
-            completed_executions.append(e)
+            completed_executions.append(execution)
         new_executions = filter_processed_executions(
             completed_executions, s3_bucket, s3_prefix
         )
