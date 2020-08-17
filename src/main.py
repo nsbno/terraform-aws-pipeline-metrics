@@ -385,6 +385,17 @@ def get_metrics(state_machine_name, executions):
                             },
                         }
                     )
+                    logger.info(
+                        "State '%s' recovered by execution '%s' in %s seconds",
+                        state_name,
+                        e["name"],
+                        (
+                            state["success_event"]["timestamp"]
+                            - failed_states[state_name]["fail_event"][
+                                "timestamp"
+                            ]
+                        ).total_seconds(),
+                    )
                     failed_states[state_name] = None
             if state["fail_event"]:
                 if (
