@@ -587,26 +587,24 @@ def lambda_handler(event, context):
                 first_running_execution = execution
                 break
             completed_executions.append(execution)
-        completed_executions_filtered = list(
-            filter(
-                lambda execution: (execution["status"] != "SUCCEEDED")
-                or not first_running_execution
-                or (
-                    first_running_execution
+        if first_running_execution:
+            if next(
+                (
+                    execution
+                    for execution in completed_executions
+                    if execution["status"] == "SUCCEEDED"
                     and execution["stopDate"]
-                    < first_running_execution["startDate"]
+                    > first_running_execution["startDate"]
                 ),
-                completed_executions,
-            )
-        )
-        if len(completed_executions) != len(completed_executions_filtered):
-            logger.info(
-                "Ignoring %s completed executions that needs to wait for one or more running executions to finish",
-                len(completed_executions) - len(completed_executions_filtered),
-            )
-
+                None,
+            ):
+                logger.info(
+                    "Skipping metric collection and reporting for state machine %s as we need to wait for one or more running executions to finish before we can accurately calculate metrics",
+                    state_machine_name,
+                )
+                continue
         new_executions = filter_processed_executions(
-            completed_executions_filtered, s3_bucket, s3_prefix
+            completed_executions, s3_bucket, s3_prefix
         )
 
         detailed_new_executions = get_detailed_executions(
@@ -623,8 +621,9 @@ def lambda_handler(event, context):
         )
         if len(unprocessed_execution_arns):
             logger.info(
-                "%s executions to be processed at a later time due to failed states that have not yet been recovered",
+                "%s executions needs to be processed at a later time due to failed states that have not yet been recovered '%s'",
                 len(unprocessed_execution_arns),
+                json.dumps(unprocessed_execution_arns),
             )
         processed_executions = list(
             filter(
