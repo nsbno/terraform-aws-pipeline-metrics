@@ -323,7 +323,7 @@ def get_metrics(state_machine_name, executions):
             execution_failure_chain = []
             logger.info(
                 "Failed execution '%s' recovered by execution '%s' in %s seconds",
-                failed_execution["execution"]["name"],
+                failed_execution["name"],
                 execution["name"],
                 (
                     execution["stopDate"] - failed_execution["stopDate"]
