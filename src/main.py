@@ -588,9 +588,10 @@ def lambda_handler(event, context):
             completed_executions.append(execution)
         completed_executions_filtered = list(
             filter(
-                lambda execution: not first_running_execution
+                lambda execution: (execution["status"] != "SUCCEEDED")
+                or not first_running_execution
                 or (
-                    execution["status"] != "SUCCEEDED"
+                    first_running_execution
                     and execution["stopDate"]
                     < first_running_execution["startDate"]
                 ),
