@@ -430,7 +430,13 @@ def get_metrics(state_machine_name, executions):
                     }
                 )
 
-    return metrics
+    # Find executions that contain failed states that have not been fixed
+    # they'll need to be processed at a later invocation
+    unprocessed_execution_arns = []
+    for state_name, state_data in failed_states.items():
+        if state_data:
+            unprocessed_execution_arns.append(state_data["executionArn"])
+    return metrics, unprocessed_execution_arns
 
 
 def get_deduplicated_metrics(metrics, dynamodb_table):
@@ -575,12 +581,18 @@ def lambda_handler(event, context):
         executions = sorted(executions, key=lambda e: e["startDate"])
         completed_executions = []
         for i, execution in enumerate(executions):
-            if execution["status"] == "RUNNING" or (
-                i < (len(executions) - 1)
-                and executions[i + 1]["status"] == "RUNNING"
-            ):
+            if execution["status"] == "RUNNING":
+                first_running_execution = execution
                 break
             completed_executions.append(execution)
+        executions = list(
+            filter(
+                lambda execution: execution["status"] == "SUCCEEDED"
+                and execution["stopDate"]
+                < first_running_execution["startDate"],
+                executions,
+            )
+        )
         new_executions = filter_processed_executions(
             completed_executions, s3_bucket, s3_prefix
         )
@@ -589,7 +601,16 @@ def lambda_handler(event, context):
             new_executions, client=sfn
         )
 
-        metrics = get_metrics(state_machine_name, detailed_new_executions)
+        metrics, unprocessed_execution_arns = get_metrics(
+            state_machine_name, detailed_new_executions
+        )
+        processed_executions = list(
+            filter(
+                lambda execution: execution["executionArn"]
+                not in unprocessed_execution_arns,
+                detailed_new_executions,
+            )
+        )
         logger.info(
             "Found %s unprocessed, completed executions and %s metrics for state machine '%s'",
             len(detailed_new_executions),
@@ -686,10 +707,8 @@ def lambda_handler(event, context):
                             retries += 1
                             continue
 
-        if len(detailed_new_executions):
-            save_executions_to_s3(
-                detailed_new_executions, s3_bucket, s3_prefix
-            )
+        if len(processed_executions):
+            save_executions_to_s3(processed_executions, s3_bucket, s3_prefix)
         logger.info(
             "Finished metric collection and reporting for state machine '%s'",
             state_machine_name,
