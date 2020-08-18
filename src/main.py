@@ -236,7 +236,10 @@ def get_state_events(state_name, events):
 
 def get_metrics(state_machine_name, executions):
     """Return metrics based on a list of detailed AWS Step Functions
-    state machine executions. The data under each metric's `metric_data` key is
+    state machine executions, as well as a list of execution ARNs that need
+    to be processed again by a later invocation.
+
+    For each metric, the data under each metric's `metric_data` key is
     in the format expected by CloudWatch when publishing metrics
     (i.e., `cloudwatch.put_metric_data(..., MetricData=metric["metric_data"]`).
     The other fields in each metric is used for constructing unique keys
@@ -248,27 +251,35 @@ def get_metrics(state_machine_name, executions):
         state_machine_name,
     )
     metrics = []
-    failed_execution = {}
-    failed_states = {}
-    for e in executions:
-        detailed_states = [
-            {
-                "state_name": state_name,
-                **get_state_events(state_name, e["events"]),
-            }
-            for state_name in get_names_of_entered_states(e["events"])
-        ]
+    states = {}
+    execution_failure_chain = []
+    # Keep track of failed executions and executions that contain failed
+    # states that have not yet been recovered.
+    # They'll need to be processed at a later invocation
+    unprocessed_execution_arns = []
+    # Get metrics on an execution basis
+    for execution in sorted(executions, key=lambda e: e["stopDate"]):
+        # Update state data
+        # TODO: Avoid storing duplicate `execution` objects across different states
+        for state_name in get_names_of_entered_states(execution["events"]):
+            states[state_name] = states.get(state_name, []) + [
+                {
+                    "execution": execution,
+                    **get_state_events(state_name, execution["events"]),
+                }
+            ]
+
         metrics.append(
             {
-                "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
+                "execution": f'{execution["executionArn"]}|{execution["startDate"].isoformat()}',
                 "metric": "StateMachineSuccess",
-                "execution_arn": e["executionArn"],
-                "start_date": e["startDate"].isoformat(),
+                "execution_arn": execution["executionArn"],
+                "start_date": execution["startDate"].isoformat(),
                 "metric_data": {
                     "MetricName": "StateMachineSuccess"
-                    if e["status"] == "SUCCEEDED"
+                    if execution["status"] == "SUCCEEDED"
                     else "StateMachineFail",
-                    "Timestamp": e["stopDate"],
+                    "Timestamp": execution["stopDate"],
                     "Dimensions": [
                         {
                             "Name": "StateMachineName",
@@ -276,22 +287,26 @@ def get_metrics(state_machine_name, executions):
                         },
                     ],
                     "Value": int(
-                        (e["stopDate"] - e["startDate"]).total_seconds() * 1000
+                        (
+                            execution["stopDate"] - execution["startDate"]
+                        ).total_seconds()
+                        * 1000
                     ),
                     "Unit": "Milliseconds",
                 },
             }
         )
-        if e["status"] == "SUCCEEDED" and failed_execution:
+        if execution["status"] == "SUCCEEDED" and len(execution_failure_chain):
+            failed_execution = execution_failure_chain[0]
             metrics.append(
                 {
-                    "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
+                    "execution": f'{execution["executionArn"]}|{execution["startDate"].isoformat()}',
                     "metric": "StateMachineRecovery",
-                    "execution_arn": e["executionArn"],
-                    "start_date": e["startDate"].isoformat(),
+                    "execution_arn": execution["executionArn"],
+                    "start_date": execution["startDate"].isoformat(),
                     "metric_data": {
                         "MetricName": "StateMachineRecovery",
-                        "Timestamp": e["stopDate"],
+                        "Timestamp": execution["stopDate"],
                         "Dimensions": [
                             {
                                 "Name": "StateMachineName",
@@ -300,7 +315,8 @@ def get_metrics(state_machine_name, executions):
                         ],
                         "Value": int(
                             (
-                                e["stopDate"] - failed_execution["stopDate"]
+                                execution["stopDate"]
+                                - failed_execution["stopDate"]
                             ).total_seconds()
                             * 1000
                         ),
@@ -308,20 +324,36 @@ def get_metrics(state_machine_name, executions):
                     },
                 }
             )
-            failed_execution = {}
-        elif e["status"] != "SUCCEEDED" and not failed_execution:
-            failed_execution = e
+            execution_failure_chain = []
+            logger.info(
+                "Failed execution '%s' recovered by execution '%s' in %s seconds",
+                failed_execution["name"],
+                execution["name"],
+                (
+                    execution["stopDate"] - failed_execution["stopDate"]
+                ).total_seconds(),
+            )
 
-        for state in detailed_states:
-            # TODO: Is success_event without exit_event even possible?
-            state_name = state["state_name"]
+        elif execution["status"] != "SUCCEEDED":
+            execution_failure_chain.append(execution)
+
+    if len(execution_failure_chain):
+        unprocessed_execution_arns.append(
+            execution_failure_chain[0]["executionArn"]
+        )
+
+    # Get metrics on a state basis
+    for state_name, events in states.items():
+        # TODO: Is success_event without exit_event even possible?
+        for state in events:
+            execution = state["execution"]
             if state["success_event"]:
                 metrics.append(
                     {
-                        "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
+                        "execution": f'{execution["executionArn"]}|{execution["startDate"].isoformat()}',
                         "metric": state_name + "|" + "StateSuccess",
-                        "execution_arn": e["executionArn"],
-                        "start_date": e["startDate"].isoformat(),
+                        "execution_arn": execution["executionArn"],
+                        "start_date": execution["startDate"].isoformat(),
                         "metric_data": {
                             "MetricName": "StateSuccess",
                             "Timestamp": state["success_event"]["timestamp"],
@@ -343,60 +375,13 @@ def get_metrics(state_machine_name, executions):
                         },
                     }
                 )
-                # Check if recovered from failed state, in which case calculate MTTR
-                if (
-                    failed_states.get(state_name, None)
-                    and failed_states[state_name]["startDate"].timestamp()
-                    < e["startDate"].timestamp()
-                ):
-                    metrics.append(
-                        {
-                            "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
-                            "metric": state_name + "|" + "StateRecovery",
-                            "execution_arn": e["executionArn"],
-                            "start_date": e["startDate"].isoformat(),
-                            "metric_data": {
-                                "MetricName": "StateRecovery",
-                                "Dimensions": [
-                                    {
-                                        "Name": "StateMachineName",
-                                        "Value": state_machine_name,
-                                    },
-                                    {
-                                        "Name": "StateName",
-                                        "Value": state_name,
-                                    },
-                                ],
-                                "Timestamp": state["success_event"][
-                                    "timestamp"
-                                ],
-                                "Value": int(
-                                    (
-                                        state["success_event"]["timestamp"]
-                                        - failed_states[state_name][
-                                            "fail_event"
-                                        ]["timestamp"]
-                                    ).total_seconds()
-                                    * 1000
-                                ),
-                                "Unit": "Milliseconds",
-                            },
-                        }
-                    )
-                    failed_states[state_name] = None
             if state["fail_event"]:
-                if (
-                    not failed_states.get(state_name, None)
-                    or state["fail_event"]["timestamp"]
-                    < failed_states[state_name]["fail_event"]["timestamp"]
-                ):
-                    failed_states[state_name] = {**e, **state}
                 metrics.append(
                     {
-                        "execution": f'{e["executionArn"]}|{e["startDate"].isoformat()}',
+                        "execution": f'{execution["executionArn"]}|{execution["startDate"].isoformat()}',
                         "metric": state_name + "|" + "StateFail",
-                        "execution_arn": e["executionArn"],
-                        "start_date": e["startDate"].isoformat(),
+                        "execution_arn": execution["executionArn"],
+                        "start_date": execution["startDate"].isoformat(),
                         "metric_data": {
                             "MetricName": "StateFail",
                             "Timestamp": state["fail_event"]["timestamp"],
@@ -428,7 +413,85 @@ def get_metrics(state_machine_name, executions):
                     }
                 )
 
-    return metrics
+    # Calculate StateRecovery metric
+    for state_name, events in states.items():
+        event_chain = list(
+            filter(
+                lambda s: s.get("fail_event", None)
+                or s.get("success_event", None),
+                events,
+            )
+        )
+        event_chain = sorted(
+            event_chain,
+            key=lambda s: s["fail_event"]["timestamp"]
+            if s.get("fail_event", None)
+            else s["success_event"]["timestamp"],
+        )
+        failure_chain = []
+        for event in event_chain:
+            if event.get("success_event", None):
+                if len(failure_chain):
+                    recovered_by = event
+                    execution = recovered_by["execution"]
+                    initial_failure = failure_chain[0]
+                    metrics.append(
+                        {
+                            "execution": f'{execution["executionArn"]}|{execution["startDate"].isoformat()}',
+                            "metric": state_name + "|" + "StateRecovery",
+                            "execution_arn": execution["executionArn"],
+                            "start_date": execution["startDate"].isoformat(),
+                            "metric_data": {
+                                "MetricName": "StateRecovery",
+                                "Dimensions": [
+                                    {
+                                        "Name": "StateMachineName",
+                                        "Value": state_machine_name,
+                                    },
+                                    {
+                                        "Name": "StateName",
+                                        "Value": state_name,
+                                    },
+                                ],
+                                "Timestamp": recovered_by["success_event"][
+                                    "timestamp"
+                                ],
+                                "Value": int(
+                                    (
+                                        recovered_by["success_event"][
+                                            "timestamp"
+                                        ]
+                                        - initial_failure["fail_event"][
+                                            "timestamp"
+                                        ]
+                                    ).total_seconds()
+                                    * 1000
+                                ),
+                                "Unit": "Milliseconds",
+                            },
+                        }
+                    )
+                    logger.info(
+                        "Failed state '%s' from execution '%s' recovered by execution '%s' in %s seconds",
+                        state_name,
+                        initial_failure["execution"]["name"],
+                        execution["name"],
+                        (
+                            recovered_by["success_event"]["timestamp"]
+                            - initial_failure["fail_event"]["timestamp"]
+                        ).total_seconds(),
+                    )
+                failure_chain = []
+            else:
+                failure_chain.append(event)
+
+        if len(failure_chain):
+            unprocessed_execution_arns.append(
+                failure_chain[0]["execution"]["executionArn"]
+            )
+
+    unprocessed_execution_arns = list(set(unprocessed_execution_arns))
+    return metrics, unprocessed_execution_arns
 
 
 def get_deduplicated_metrics(metrics, dynamodb_table):
@@ -564,18 +627,37 @@ def lambda_handler(event, context):
     dynamodb = boto3.resource("dynamodb")
     dynamodb_table = dynamodb.Table(dynamodb_table_name)
 
+    # TODO: Split this logic into smaller, decoupled and testable units
     for state_machine_arn in state_machine_arns:
         state_machine_name = state_machine_arn.split(":")[6]
         s3_prefix = f"{current_account_id}/{state_machine_name}"
         executions = sfn.list_executions(
-            stateMachineArn=state_machine_arn, maxResults=100,
+            stateMachineArn=state_machine_arn, maxResults=500,
         )["executions"]
         executions = sorted(executions, key=lambda e: e["startDate"])
         completed_executions = []
-        for e in executions:
-            if e["status"] == "RUNNING":
+        first_running_execution = None
+        for i, execution in enumerate(executions):
+            if execution["status"] == "RUNNING":
+                first_running_execution = execution
                 break
-            completed_executions.append(e)
+            completed_executions.append(execution)
+        if first_running_execution:
+            if next(
+                (
+                    execution
+                    for execution in completed_executions
+                    if execution["status"] == "SUCCEEDED"
+                    and execution["stopDate"]
+                    > first_running_execution["startDate"]
+                ),
+                None,
+            ):
+                logger.info(
+                    "Skipping metric collection and reporting for state machine '%s' as we need to wait for one or more running executions to finish before metrics can be accurately calculated",
+                    state_machine_name,
+                )
+                continue
         new_executions = filter_processed_executions(
             completed_executions, s3_bucket, s3_prefix
         )
@@ -583,13 +665,32 @@ def lambda_handler(event, context):
         detailed_new_executions = get_detailed_executions(
             new_executions, client=sfn
         )
-
-        metrics = get_metrics(state_machine_name, detailed_new_executions)
         logger.info(
-            "Found %s unprocessed, completed executions and %s metrics for state machine '%s'",
+            "Found %s unprocessed, completed executions for state machine '%s'",
             len(detailed_new_executions),
+            state_machine_name,
+        )
+
+        metrics, unprocessed_execution_arns = get_metrics(
+            state_machine_name, detailed_new_executions
+        )
+        logger.info(
+            "Calculated %s metrics for state machine '%s'",
             len(metrics),
             state_machine_name,
+        )
+        if len(unprocessed_execution_arns):
+            logger.info(
+                "%s executions need to be processed at a later time due to failed executions/states that have not yet been recovered '%s'",
+                len(unprocessed_execution_arns),
+                json.dumps(unprocessed_execution_arns),
+            )
+        processed_executions = list(
+            filter(
+                lambda execution: execution["executionArn"]
+                not in unprocessed_execution_arns,
+                detailed_new_executions,
+            )
         )
         filtered_metrics = list(
             filter(
@@ -681,10 +782,8 @@ def lambda_handler(event, context):
                             retries += 1
                             continue
 
-        if len(detailed_new_executions):
-            save_executions_to_s3(
-                detailed_new_executions, s3_bucket, s3_prefix
-            )
+        if len(processed_executions):
+            save_executions_to_s3(processed_executions, s3_bucket, s3_prefix)
         logger.info(
             "Finished metric collection and reporting for state machine '%s'",
             state_machine_name,
