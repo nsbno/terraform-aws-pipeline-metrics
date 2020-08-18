@@ -236,7 +236,10 @@ def get_state_events(state_name, events):
 
 def get_metrics(state_machine_name, executions):
     """Return metrics based on a list of detailed AWS Step Functions
-    state machine executions. The data under each metric's `metric_data` key is
+    state machine executions, as well as a list of execution ARNs that need
+    to be processed again by a later invocation.
+
+    For each metric, the data under each metric's `metric_data` key is
     in the format expected by CloudWatch when publishing metrics
     (i.e., `cloudwatch.put_metric_data(..., MetricData=metric["metric_data"]`).
     The other fields in each metric is used for constructing unique keys
@@ -250,7 +253,8 @@ def get_metrics(state_machine_name, executions):
     metrics = []
     states = {}
     execution_failure_chain = []
-    # Find executions that contain failed states that have not been fixed.
+    # Keep track of failed executions and executions that contain failed
+    # states that have not yet been recovered.
     # They'll need to be processed at a later invocation
     unprocessed_execution_arns = []
     # Get metrics on an execution basis
@@ -408,6 +412,7 @@ def get_metrics(state_machine_name, executions):
                     }
                 )
 
+    # Calculate StateRecovery metric
     for state_name, events in states.items():
         event_chain = list(
             filter(
@@ -620,6 +625,7 @@ def lambda_handler(event, context):
     dynamodb = boto3.resource("dynamodb")
     dynamodb_table = dynamodb.Table(dynamodb_table_name)
 
+    # TODO: Split this logic into smaller, decoupled and testable units
     for state_machine_arn in state_machine_arns:
         state_machine_name = state_machine_arn.split(":")[6]
         s3_prefix = f"{current_account_id}/{state_machine_name}"
