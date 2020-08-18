@@ -337,9 +337,10 @@ def get_metrics(state_machine_name, executions):
         elif execution["status"] != "SUCCEEDED":
             execution_failure_chain.append(execution)
 
-    unprocessed_execution_arns += list(
-        map(lambda e: e["executionArn"], execution_failure_chain)
-    )
+    if len(execution_failure_chain):
+        unprocessed_execution_arns.append(
+            execution_failure_chain[0]["executionArn"]
+        )
 
     # Get metrics on a state basis
     for state_name, events in states.items():
@@ -484,9 +485,10 @@ def get_metrics(state_machine_name, executions):
             else:
                 failure_chain.append(event)
 
-        unprocessed_execution_arns += list(
-            map(lambda e: e["execution"]["executionArn"], failure_chain)
-        )
+        if len(failure_chain):
+            unprocessed_execution_arns.append(
+                failure_chain[0]["execution"]["executionArn"]
+            )
 
     unprocessed_execution_arns = list(set(unprocessed_execution_arns))
     return metrics, unprocessed_execution_arns
