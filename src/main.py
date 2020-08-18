@@ -672,6 +672,11 @@ def lambda_handler(event, context):
         metrics, unprocessed_execution_arns = get_metrics(
             state_machine_name, detailed_new_executions
         )
+        logger.info(
+            "Calculated %s metrics for state machine '%s'",
+            len(metrics),
+            state_machine_name,
+        )
         if len(unprocessed_execution_arns):
             logger.info(
                 "%s executions needs to be processed at a later time due to failed states that have not yet been recovered '%s'",
