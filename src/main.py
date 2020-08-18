@@ -681,7 +681,7 @@ def lambda_handler(event, context):
         )
         if len(unprocessed_execution_arns):
             logger.info(
-                "%s executions needs to be processed at a later time due to failed states that have not yet been recovered '%s'",
+                "%s executions need to be processed at a later time due to failed executions/states that have not yet been recovered '%s'",
                 len(unprocessed_execution_arns),
                 json.dumps(unprocessed_execution_arns),
             )
