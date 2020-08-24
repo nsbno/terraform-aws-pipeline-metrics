@@ -36,10 +36,39 @@ resource "aws_dynamodb_table" "this" {
   tags = var.tags
 }
 
+resource "aws_iam_role" "replication" {
+  assume_role_policy = data.aws_iam_policy_document.s3_assume.json
+  description        = "Role for replication of AWS Step Functions execution data saved in S3"
+}
+
+resource "aws_iam_role_policy" "replication_to_s3" {
+  count  = var.replication_destination_bucket != "" ? 1 : 0
+  policy = data.aws_iam_policy_document.replication_for_s3.json
+  role   = aws_iam_role.replication.id
+}
+
 resource "aws_s3_bucket" "this" {
   bucket = "${local.current_account_id}-${var.name_prefix}-sfn-executions"
   versioning {
     enabled = true
+  }
+
+  # This will enable replication only if `replication_destination_bucket` is a non-empty string
+  dynamic "replication_configuration" {
+    for_each = toset(compact([var.replication_destination_bucket]))
+    iterator = bucket
+    content {
+      role = aws_iam_role.replication.arn
+      rules {
+        status = "Enabled"
+        filter {
+          prefix = "${local.current_account_id}/"
+        }
+        destination {
+          bucket = "arn:aws:s3:::${bucket.value}"
+        }
+      }
+    }
   }
   tags = var.tags
 }
