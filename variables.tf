@@ -36,4 +36,7 @@ variable "schedule_expression" {
   default     = "rate(1 hour)"
 }
 
-
+variable "replication_destination_bucket" {
+  description = "The name of an S3 destination bucket to replicate data to."
+  default     = ""
+}
