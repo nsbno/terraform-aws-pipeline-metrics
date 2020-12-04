@@ -631,9 +631,13 @@ def lambda_handler(event, context):
     for state_machine_arn in state_machine_arns:
         state_machine_name = state_machine_arn.split(":")[6]
         s3_prefix = f"{current_account_id}/{state_machine_name}"
-        executions = sfn.list_executions(
-            stateMachineArn=state_machine_arn, maxResults=500,
-        )["executions"]
+        try:
+            executions = sfn.list_executions(
+                stateMachineArn=state_machine_arn, maxResults=500,
+            )["executions"]
+        except sfn.exceptions.StateMachineDoesNotExist:
+            logger.warn("State machine '%s' does not exist", state_machine_arn)
+            continue
         executions = sorted(executions, key=lambda e: e["startDate"])
         completed_executions = []
         first_running_execution = None
