@@ -15,6 +15,11 @@ data "aws_iam_policy_document" "cloudwatch_for_lambda" {
     effect    = "Allow"
     actions   = ["cloudwatch:PutMetricData"]
     resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "cloudwatch:namespace"
+      values   = [local.metric_namespace, local.metric_namespace_realtime]
+    }
   }
 }
 
@@ -22,13 +27,19 @@ data "aws_iam_policy_document" "step_functions_for_lambda" {
   statement {
     effect    = "Allow"
     actions   = ["states:ListExecutions"]
-    resources = var.state_machine_arns
+    resources = length(var.state_machine_arns) > 0 ? var.state_machine_arns : ["aws:arn:aws:states:${local.current_region}:${local.current_account_id}:stateMachine:*"]
+  }
+
+  statement {
+    effect    = "Allow"
+    actions   = ["states:ListStateMachines"]
+    resources = ["*"]
   }
 
   statement {
     effect    = "Allow"
     actions   = ["states:GetExecutionHistory"]
-    resources = formatlist("arn:aws:states:${local.current_region}:${local.current_account_id}:execution:%s:*", local.state_machine_names)
+    resources = length(local.state_machine_names) > 0 ? formatlist("arn:aws:states:${local.current_region}:${local.current_account_id}:execution:%s:*", local.state_machine_names) : ["arn:aws:states:${local.current_region}:${local.current_account_id}:execution:*"]
   }
 }
 
@@ -59,18 +70,14 @@ data "aws_iam_policy_document" "s3_for_lambda" {
 
 data "aws_iam_policy_document" "logs_for_lambda" {
   statement {
-    effect    = "Allow"
-    actions   = ["logs:CreateLogGroup"]
-    resources = ["arn:aws:logs:${local.current_region}:${local.current_account_id}:*"]
-  }
-  statement {
     effect = "Allow"
     actions = [
       "logs:CreateLogStream",
       "logs:PutLogEvents"
     ]
     resources = [
-      "arn:aws:logs:${local.current_region}:${local.current_account_id}:log-group:/aws/lambda/${aws_lambda_function.this.function_name}*",
+      "${aws_cloudwatch_log_group.this.arn}:*",
+      "${aws_cloudwatch_log_group.realtime.arn}:*",
     ]
   }
 }

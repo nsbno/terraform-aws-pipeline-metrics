@@ -4,7 +4,8 @@ variable "name_prefix" {
 }
 
 variable "state_machine_arns" {
-  description = "ARNs of state machines to report metrics on."
+  description = "An optional list of ARNs of state machines to report metrics on. If empty, metrics will be collected for all state machines in the current AWS region."
+  default     = []
   type        = list(string)
 }
 
@@ -20,6 +21,11 @@ variable "states_to_display" {
   type        = list(string)
 }
 
+variable "collect_realtime_metrics" {
+  description = "Whether to collect realtime metrics or not."
+  default     = true
+}
+
 variable "tags" {
   description = "A map of tags (key-value pairs) passed to resources."
   type        = map(string)
@@ -31,9 +37,12 @@ variable "lambda_timeout" {
   default     = 300
 }
 
+variable "lambda_log_retention_in_days" {
+  description = "The number of days to retain CloudWatch logs from the Lambda."
+  default     = 14
+}
+
 variable "schedule_expression" {
   description = "The schedule expression (in UTC) to use for the CloudWatch Event Rule that triggers the Lambda."
   default     = "rate(1 hour)"
 }
-
-
