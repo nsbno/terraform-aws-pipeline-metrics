@@ -94,5 +94,7 @@ def lambda_handler(event, context):
                     "StorageResolution": 1,
                 },
             )
-    logger.info("Publish %s custom metrics to CloudWatch", len(metric_datums))
+    logger.info(
+        "Publishing %s custom metrics to CloudWatch", len(metric_datums)
+    )
     put_cloudwatch_metrics(metric_datums, metric_namespace)
