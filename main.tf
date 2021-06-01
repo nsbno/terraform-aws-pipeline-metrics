@@ -2,16 +2,24 @@ data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
 locals {
-  current_account_id  = data.aws_caller_identity.current.account_id
-  current_region      = data.aws_region.current.name
-  state_machine_names = sort([for arn in var.state_machine_arns : split(":", arn)[6]])
-  metric_namespace    = "${var.name_prefix}-pipeline-metrics"
+  current_account_id        = data.aws_caller_identity.current.account_id
+  current_region            = data.aws_region.current.name
+  state_machine_names       = sort([for arn in var.state_machine_arns : split(":", arn)[6]])
+  metric_namespace          = "${var.name_prefix}-pipeline-metrics"
+  metric_namespace_realtime = "${var.name_prefix}-pipeline-metrics/realtime"
 }
 
 data "archive_file" "this" {
-  type        = "zip"
-  source_file = "${path.module}/src/main.py"
-  output_path = "${path.module}/src/main.zip"
+  type = "zip"
+  source {
+    filename = "main.py"
+    content  = file("${path.module}/src/main.py")
+  }
+  source {
+    filename = "realtime.py"
+    content  = file("${path.module}/src/realtime.py")
+  }
+  output_path = "${path.module}/.terraform_artifacts/main.zip"
 }
 
 resource "aws_dynamodb_table" "this" {
@@ -64,6 +72,22 @@ resource "aws_lambda_function" "this" {
   tags    = var.tags
 }
 
+resource "aws_lambda_function" "realtime" {
+  function_name    = "${var.name_prefix}-pipeline-metrics-realtime"
+  handler          = "realtime.lambda_handler"
+  role             = aws_iam_role.this.arn
+  runtime          = "python3.7"
+  filename         = data.archive_file.this.output_path
+  source_code_hash = filebase64sha256(data.archive_file.this.output_path)
+  environment {
+    variables = {
+      METRIC_NAMESPACE = local.metric_namespace_realtime
+    }
+  }
+  timeout = var.lambda_timeout
+  tags    = var.tags
+}
+
 resource "aws_iam_role" "this" {
   assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
   tags               = var.tags
@@ -94,6 +118,12 @@ resource "aws_iam_role_policy" "step_functions_to_lambda" {
   role   = aws_iam_role.this.id
 }
 
+
+####################################################
+#
+# EventBridge
+#
+####################################################
 resource "aws_cloudwatch_event_rule" "this" {
   description         = "Invoke the metric Lambda on a schedule"
   schedule_expression = var.schedule_expression
@@ -110,6 +140,61 @@ resource "aws_lambda_permission" "this" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.this.arn
 }
+
+resource "aws_cloudwatch_event_rule" "sfn_end" {
+  description   = "Triggers when an AWS Step Functions state machine execution succeeds or fails."
+  is_enabled    = var.collect_realtime_metrics
+  tags          = var.tags
+  event_pattern = <<EOF
+{
+  "source": [
+    "aws.states"
+  ],
+  "detail-type": [
+    "Step Functions Execution Status Change"
+  ],
+  "detail": {
+    "status": ["FAILED", "SUCCEEDED", "TIMED_OUT", "ABORTED"],
+    "stateMachineArn": [
+      {
+        "prefix": ""
+      }
+    ]
+  }
+}
+EOF
+}
+
+resource "aws_cloudwatch_event_target" "realtime" {
+  arn  = aws_lambda_function.realtime.arn
+  rule = aws_cloudwatch_event_rule.sfn_end.name
+}
+
+resource "aws_lambda_permission" "allow_eventbridge" {
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.realtime.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.sfn_end.arn
+}
+
+
+####################################################
+#
+# CloudWatch Log groups
+#
+####################################################
+resource "aws_cloudwatch_log_group" "this" {
+  name              = "/aws/lambda/${aws_lambda_function.this.function_name}"
+  retention_in_days = var.lambda_log_retention_in_days
+  tags              = var.tags
+}
+
+resource "aws_cloudwatch_log_group" "realtime" {
+  name              = "/aws/lambda/${aws_lambda_function.realtime.function_name}"
+  retention_in_days = var.lambda_log_retention_in_days
+  tags              = var.tags
+}
+
 
 resource "aws_cloudwatch_dashboard" "this" {
   for_each       = var.create_cloudwatch_dashboard ? toset(local.state_machine_names) : toset([])

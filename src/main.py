@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (C) 2020 Erlend Ekern <dev@ekern.me>
+# Copyright (C) 2021 Vy
 #
 # Distributed under terms of the MIT license.
 
@@ -611,6 +611,37 @@ def filter_processed_executions(executions, s3_bucket, s3_prefix):
     return unprocessed_executions
 
 
+def put_cloudwatch_metrics(metric_datums, metric_namespace):
+    """Publish a list of custom metrics to CloudWatch"""
+    # Batch the requests due to API limits (max. 20 metrics per API call)
+    batch_size = 20
+    cloudwatch = boto3.client("cloudwatch")
+    for i in range(0, len(metric_datums), batch_size):
+        batch_number = (i // batch_size) + 1
+        retries = 0
+        batch = metric_datums[i : i + batch_size]
+        while True:
+            try:
+                response = cloudwatch.put_metric_data(
+                    Namespace=metric_namespace, MetricData=batch
+                )
+                break
+            except botocore.exceptions.ClientError:
+                logger.exception(
+                    "Failed to publish batch #%s of metrics to CloudWatch",
+                    batch_number,
+                )
+                if retries < 2:
+                    retries += 1
+                    continue
+                raise
+
+        logger.debug(
+            "Successfully published batch #%s of metrics to CloudWatch",
+            batch_number,
+        )
+
+
 def lambda_handler(event, context):
     logger.info("Lambda triggered with event '%s'", event)
 
@@ -626,14 +657,27 @@ def lambda_handler(event, context):
 
     dynamodb = boto3.resource("dynamodb")
     dynamodb_table = dynamodb.Table(dynamodb_table_name)
+    if len(state_machine_arns) == 0:
+        logger.info(
+            "No state machine ARNs to collect metrics for were passed in"
+        )
+        state_machines = sfn.list_state_machines()["stateMachines"]
+        state_machine_arns = list(
+            map(lambda s: s["stateMachineArn"], state_machines)
+        )
+        logger.info("Found %s ARNs using the SDK", len(state_machine_arns))
 
     # TODO: Split this logic into smaller, decoupled and testable units
     for state_machine_arn in state_machine_arns:
         state_machine_name = state_machine_arn.split(":")[6]
         s3_prefix = f"{current_account_id}/{state_machine_name}"
-        executions = sfn.list_executions(
-            stateMachineArn=state_machine_arn, maxResults=500,
-        )["executions"]
+        try:
+            executions = sfn.list_executions(
+                stateMachineArn=state_machine_arn, maxResults=500,
+            )["executions"]
+        except sfn.exceptions.StateMachineDoesNotExist:
+            logger.warn("State machine '%s' does not exist", state_machine_arn)
+            continue
         executions = sorted(executions, key=lambda e: e["startDate"])
         completed_executions = []
         first_running_execution = None
