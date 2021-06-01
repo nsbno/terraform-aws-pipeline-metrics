@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (C) 2020 Erlend Ekern <dev@ekern.me>
+# Copyright (C) 2021 Vy
 #
 # Distributed under terms of the MIT license.
 
