@@ -27,7 +27,7 @@ data "aws_iam_policy_document" "step_functions_for_lambda" {
   statement {
     effect    = "Allow"
     actions   = ["states:ListExecutions"]
-    resources = length(var.state_machine_arns) > 0 ? var.state_machine_arns : ["aws:arn:aws:states:${local.current_region}:${local.current_account_id}:stateMachine:*"]
+    resources = length(var.state_machine_arns) > 0 ? var.state_machine_arns : ["arn:aws:states:${local.current_region}:${local.current_account_id}:stateMachine:*"]
   }
 
   statement {
