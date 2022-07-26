@@ -1,3 +1,14 @@
+terraform {
+  required_version = ">= 1.0.0"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = ">= 4.9.0"
+    }
+  }
+}
+
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
@@ -46,10 +57,16 @@ resource "aws_dynamodb_table" "this" {
 
 resource "aws_s3_bucket" "this" {
   bucket = "${local.current_account_id}-${var.name_prefix}-sfn-executions"
-  versioning {
-    enabled = true
-  }
+
   tags = var.tags
+}
+
+resource "aws_s3_bucket_versioning" "this" {
+  bucket = aws_s3_bucket.this.bucket
+
+  versioning_configuration {
+    status = "Enabled"
+  }
 }
 
 resource "aws_lambda_function" "this" {
