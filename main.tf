@@ -99,6 +99,8 @@ resource "aws_lambda_function" "realtime" {
   environment {
     variables = {
       METRIC_NAMESPACE = local.metric_namespace_realtime
+      TIMESERIES_DATABASE = aws_timestreamwrite_database.metrics.database_name
+      TIMESERIES_TABLE = aws_timestreamwrite_table.pipeline-metrics.table_name
     }
   }
   timeout = var.lambda_timeout
@@ -194,6 +196,26 @@ resource "aws_lambda_permission" "allow_eventbridge" {
   source_arn    = aws_cloudwatch_event_rule.sfn_end.arn
 }
 
+###############################################
+#                                             #
+# pipeline  metrics                           #
+# ---                                         #
+#                                             #
+###############################################
+
+resource "aws_timestreamwrite_database" "metrics" {
+  database_name = "ts-pipeline-metrics"
+}
+
+resource "aws_timestreamwrite_table" "pipeline-metrics" {
+  database_name = aws_timestreamwrite_database.metrics.database_name
+  table_name    = "ts-pipeline-events"
+
+  retention_properties {
+    magnetic_store_retention_period_in_days = 30
+    memory_store_retention_period_in_hours  = 8
+  }
+}
 
 ####################################################
 #

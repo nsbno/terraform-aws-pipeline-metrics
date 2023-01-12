@@ -46,9 +46,20 @@ def lambda_handler(event, context):
         "%s states were entered during the execution", len(state_names)
     )
     metric_datums = []
+    dimensions = [
+        {'Name': 'region', 'Value': 'eu-west-1'},
+    ]
+    table_name = os.environ["TIMESERIES_TABLE"]
+    database_name = os.environ["TIMESERIES_DATABASE"]
     for state_name in state_names:
         state_events = get_state_events(state_name, events)
+
         if state_events["success_event"]:
+            timestamp= int((state_events["success_event"]["timestamp"]
+                            - state_events["enter_event"]["timestamp"]
+                        ).total_seconds()
+                        * 1000),
+
             metric_datums.append(
                 {
                     "MetricName": "StateSuccess",
@@ -60,18 +71,34 @@ def lambda_handler(event, context):
                         },
                         {"Name": "StateName", "Value": state_name},
                     ],
-                    "Value": int(
-                        (
-                            state_events["success_event"]["timestamp"]
-                            - state_events["enter_event"]["timestamp"]
-                        ).total_seconds()
-                        * 1000
-                    ),
+                    "Value": timestamp,
                     "Unit": "Milliseconds",
                     "StorageResolution": 1,
                 }
             )
+  
+            pipelineevent = {
+            'Dimensions': dimensions,
+            'MeasureName': 'StateSuccess',
+            'MeasureValue': timestamp,
+            'MeasureValueType': 'DOUBLE',
+            "Time": state_events["success_event"]["timestamp"],
+            }
+
+            records = [pipelineevent]
+
+            try:
+                response = client.write_records(DatabaseName=database_name, TableName=table_name,
+                                               Records=records)
+            except Exception as err:
+                print("Error:", err)
+
         elif state_events["fail_event"]:
+            timestamp= int((state_events["fail_event"]["timestamp"]
+                            - state_events["enter_event"]["timestamp"]
+                        ).total_seconds()
+                        * 1000),
+
             metric_datums.append(
                 {
                     "MetricName": "StateFail",
@@ -83,18 +110,28 @@ def lambda_handler(event, context):
                         },
                         {"Name": "StateName", "Value": state_name},
                     ],
-                    "Value": int(
-                        (
-                            state_events["fail_event"]["timestamp"]
-                            - state_events["enter_event"]["timestamp"]
-                        ).total_seconds()
-                        * 1000
-                    ),
+                    "Value": timestamp,
                     "Unit": "Milliseconds",
                     "StorageResolution": 1,
                 },
             )
+
+            pipelineevent = {
+            'Dimensions': dimensions,
+            'MeasureName': 'StateFail',
+            'MeasureValue': timestamp, 
+            'MeasureValueType': 'DOUBLE',
+            "Time": state_events["fail_event"]["timestamp"],
+            }
+
+            records = [pipelineevent]
+
+            try:
+                response = client.write_records(DatabaseName=database_name, TableName=table_name,
+                                               Records=records)
+            except Exception as err:
+                print("Error:", err)
     logger.info(
-        "Publishing %s custom metrics to CloudWatch", len(metric_datums)
+        "Publishing %s custom metrics", len(metric_datums)
     )
     put_cloudwatch_metrics(metric_datums, metric_namespace)
