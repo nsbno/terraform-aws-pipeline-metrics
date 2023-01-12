@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import boto3
+import time
 
 from main import (
     get_state_events,
