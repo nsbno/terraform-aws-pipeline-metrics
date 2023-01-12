@@ -67,6 +67,15 @@ data "aws_iam_policy_document" "s3_for_lambda" {
   }
 }
 
+data "aws_iam_policy_document" "timeseries_for_lambda" {
+  statement {
+    effect    = "Allow"
+    actions   = ["timestream:DescribeEndpoints", "timestream:DescribeTable", "timestream:WriteRecords"]
+    resources = [aws_timestream.metrics.arn]
+  }
+}
+
+
 
 data "aws_iam_policy_document" "logs_for_lambda" {
   statement {

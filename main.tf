@@ -132,6 +132,11 @@ resource "aws_iam_role_policy" "s3_to_lambda" {
   role   = aws_iam_role.this.id
 }
 
+resource "aws_iam_role_policy" "timeseries_to_lambda" {
+  policy = data.aws_iam_policy_document.timeseries_for_lambda.json
+  role   = aws_iam_role.this.id
+}
+
 resource "aws_iam_role_policy" "step_functions_to_lambda" {
   policy = data.aws_iam_policy_document.step_functions_for_lambda.json
   role   = aws_iam_role.this.id

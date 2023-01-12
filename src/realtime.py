@@ -54,6 +54,7 @@ def lambda_handler(event, context):
     database_name = os.environ["TIMESERIES_DATABASE"]
     for state_name in state_names:
         state_events = get_state_events(state_name, events)
+        current_time = round(time.time() * 1000)
 
         if state_events["success_event"]:
             timestamp= int((state_events["success_event"]["timestamp"]
@@ -81,9 +82,9 @@ def lambda_handler(event, context):
             pipelineevent = {
             'Dimensions': dimensions,
             'MeasureName': 'StateSuccess',
-            'MeasureValue': timestamp,
+            'MeasureValue': str(timestamp),
             'MeasureValueType': 'DOUBLE',
-            "Time": state_events["success_event"]["timestamp"],
+            "Time": str(current_time),
             }
 
             records = [pipelineevent]
@@ -120,9 +121,9 @@ def lambda_handler(event, context):
             pipelineevent = {
             'Dimensions': dimensions,
             'MeasureName': 'StateFail',
-            'MeasureValue': timestamp, 
+            'MeasureValue': str(timestamp), 
             'MeasureValueType': 'DOUBLE',
-            "Time": state_events["fail_event"]["timestamp"],
+            "Time": str(current_time),
             }
 
             records = [pipelineevent]
