@@ -36,6 +36,7 @@ def lambda_handler(event, context):
 
     execution_arn = event["detail"]["executionArn"]
 
+    timestream = boto3.client('timestream-write')
     sfn = boto3.client("stepfunctions")
     response = sfn.get_execution_history(
         executionArn=execution_arn, maxResults=500, reverseOrder=True
@@ -88,7 +89,7 @@ def lambda_handler(event, context):
             records = [pipelineevent]
 
             try:
-                response = client.write_records(DatabaseName=database_name, TableName=table_name,
+                response = timestream.write_records(DatabaseName=database_name, TableName=table_name,
                                                Records=records)
             except Exception as err:
                 print("Error:", err)
@@ -127,7 +128,7 @@ def lambda_handler(event, context):
             records = [pipelineevent]
 
             try:
-                response = client.write_records(DatabaseName=database_name, TableName=table_name,
+                response = timestream.write_records(DatabaseName=database_name, TableName=table_name,
                                                Records=records)
             except Exception as err:
                 print("Error:", err)
