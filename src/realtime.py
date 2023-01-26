@@ -74,7 +74,13 @@ def lambda_handler(event, context):
                         },
                         {"Name": "StateName", "Value": state_name},
                     ],
-                    "Value": timestamp,
+                    "Value": int(
+                        (
+                            state_events["success_event"]["timestamp"]
+                            - state_events["enter_event"]["timestamp"]
+                        ).total_seconds()
+                        * 1000
+                    ),
                     "Unit": "Milliseconds",
                     "StorageResolution": 1,
                 }
@@ -113,7 +119,13 @@ def lambda_handler(event, context):
                         },
                         {"Name": "StateName", "Value": state_name},
                     ],
-                    "Value": timestamp,
+                    "Value": int(
+                        (
+                            state_events["fail_event"]["timestamp"]
+                            - state_events["enter_event"]["timestamp"]
+                        ).total_seconds()
+                        * 1000
+                    ),
                     "Unit": "Milliseconds",
                     "StorageResolution": 1,
                 },
