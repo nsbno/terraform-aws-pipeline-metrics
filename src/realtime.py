@@ -61,7 +61,7 @@ def lambda_handler(event, context):
             timestamp= int((state_events["success_event"]["timestamp"]
                             - state_events["enter_event"]["timestamp"]
                         ).total_seconds()
-                        * 1000),
+                        * 1000)
 
             metric_datums.append(
                 {
@@ -106,7 +106,7 @@ def lambda_handler(event, context):
             timestamp= int((state_events["fail_event"]["timestamp"]
                             - state_events["enter_event"]["timestamp"]
                         ).total_seconds()
-                        * 1000),
+                        * 1000)
 
             metric_datums.append(
                 {
