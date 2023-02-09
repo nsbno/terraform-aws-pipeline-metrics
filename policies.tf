@@ -71,7 +71,7 @@ data "aws_iam_policy_document" "timeseries_for_lambda" {
   statement {
     effect    = "Allow"
     actions   = ["timestream:DescribeEndpoints", "timestream:DescribeTable", "timestream:WriteRecords"]
-    resources = [aws_timestreamwrite_database.metrics.arn]
+    resources = [aws_timestreamwrite_table.pipeline-metrics.arn]
   }
 }
 
