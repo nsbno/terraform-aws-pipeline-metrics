@@ -88,7 +88,7 @@ def lambda_handler(event, context):
   
             pipelineevent = {
             'Dimensions': dimensions,
-            'MeasureName': 'StateSuccess',
+            'MeasureName': state_name,
             'MeasureValue': str(timestamp),
             'MeasureValueType': 'DOUBLE',
             "Time": str(current_time),
@@ -133,7 +133,7 @@ def lambda_handler(event, context):
 
             pipelineevent = {
             'Dimensions': dimensions,
-            'MeasureName': 'StateFail',
+            'MeasureName': state_name,
             'MeasureValue': str(timestamp), 
             'MeasureValueType': 'DOUBLE',
             "Time": str(current_time),
