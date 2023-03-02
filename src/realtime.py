@@ -53,6 +53,9 @@ def lambda_handler(event, context):
     ]
     table_name = os.environ["TIMESERIES_TABLE"]
     database_name = os.environ["TIMESERIES_DATABASE"]
+    deploymenttime = 0
+    deploymentstatus = "Undefined"
+
     for state_name in state_names:
         state_events = get_state_events(state_name, events)
         current_time = round(time.time() * 1000)
@@ -95,6 +98,9 @@ def lambda_handler(event, context):
             }
 
             records = [pipelineevent]
+
+            deploymenttime = timestamp + deploymenttime
+            deploymentstatus = "Deployedpipe"
 
             try:
                 response = timestream.write_records(DatabaseName=database_name, TableName=table_name,
@@ -141,11 +147,31 @@ def lambda_handler(event, context):
 
             records = [pipelineevent]
 
+            deploymenttime = timestamp + deploymenttime
+            deploymentstatus = "Failedpipe"
+
             try:
                 response = timestream.write_records(DatabaseName=database_name, TableName=table_name,
                                                Records=records)
             except Exception as err:
                 print("Error:", err)
+
+    pipelineevent = {
+        'Dimensions': dimensions,
+        'MeasureName': deploymentstatus,
+        'MeasureValue': str(deploymenttime), 
+        'MeasureValueType': 'DOUBLE',
+        "Time": str(current_time),
+        }
+
+    records = [pipelineevent]
+
+    try:
+        response = timestream.write_records(DatabaseName=database_name, TableName=table_name,
+                                        Records=records)
+    except Exception as err:
+        print("Error:", err)
+    
     logger.info(
         "Publishing %s custom metrics", len(metric_datums)
     )
