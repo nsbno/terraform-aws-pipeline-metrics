@@ -21,10 +21,8 @@ from main import (
     put_cloudwatch_metrics,
 )
 
-
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-
 
 def lambda_handler(event, context):
     logger.info(
@@ -155,7 +153,6 @@ def lambda_handler(event, context):
                                                Records=records)
             except Exception as err:
                 print("Error:", err)
-
 
     if "Unbroken" in deploymentbroken:
         deploymentbroken = "Deployedpipe"
