@@ -55,6 +55,7 @@ def lambda_handler(event, context):
     database_name = os.environ["TIMESERIES_DATABASE"]
     deploymenttime = 0
     deploymentstatus = "Undefined"
+    deploymentbroken = "Unbroken"
 
     for state_name in state_names:
         state_events = get_state_events(state_name, events)
@@ -100,7 +101,6 @@ def lambda_handler(event, context):
             records = [pipelineevent]
 
             deploymenttime = timestamp + deploymenttime
-            deploymentstatus = "Deployedpipe"
 
             try:
                 response = timestream.write_records(DatabaseName=database_name, TableName=table_name,
@@ -148,13 +148,20 @@ def lambda_handler(event, context):
             records = [pipelineevent]
 
             deploymenttime = timestamp + deploymenttime
-            deploymentstatus = "Failedpipe"
+            deploymentbroken = "Failed"
 
             try:
                 response = timestream.write_records(DatabaseName=database_name, TableName=table_name,
                                                Records=records)
             except Exception as err:
                 print("Error:", err)
+
+
+    if "Unbroken" in deploymentbroken:
+        deploymentbroken = "Deployedpipe"
+    else:
+        deploymentstatus = "Failedpipe" 
+
 
     pipelineevent = {
         'Dimensions': dimensions,
