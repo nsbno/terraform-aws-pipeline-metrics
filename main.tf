@@ -32,6 +32,6 @@ resource "aws_cloudwatch_event_rule" "sfn_status" {
 }
 
 resource "aws_cloudwatch_event_target" "sfn_events" {
-  arn  = "arn:aws:sqs:eu-west-1:${var.central_account}:pipeline-status-reporter-status-update-from-step-functions"
+  arn  = "arn:aws:events:eu-west-1:${var.central_account}:event-bus/cross-account-events"
   rule = aws_cloudwatch_event_rule.sfn_status.name
 }
